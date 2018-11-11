@@ -10,6 +10,9 @@ import time
 
 dev, baud = sys.argv[1].split(',')
 with serial.Serial(dev, baud, timeout=1) as ser:
+    def wln(line):
+        ser.write(line)
+        ser.write(b'\n')
     read_dir = os.path.join(os.environ['HOME'], 'diode-send')
     print("Scanning %s" % read_dir)
     while True:
@@ -20,11 +23,9 @@ with serial.Serial(dev, baud, timeout=1) as ser:
                 m = hashlib.md5()
                 filename = base64.b64encode(bytes(filename, 'ascii'))
                 m.update(filename)
-                ser.write(b'\n\r--filename--\n\r') # filename starts
-                time.sleep(0.5)
-                ser.write(filename)
-                ser.write(b'\n\r--content---\n\r') # content starts
-                time.sleep(0.5)
+                wln(bytes(chr(1), 'ascii')) # SOH - Start Of Header
+                wln(filename)
+                wln(bytes(chr(2), 'ascii')) # STX - Start of Text
                 with open(filepath, "rb") as fo:
                     while True:
                         content = fo.read(1024)
@@ -32,13 +33,12 @@ with serial.Serial(dev, baud, timeout=1) as ser:
                             break
                         content = base64.b64encode(content)
                         m.update(content)
-                        ser.write(content)
-                        ser.write(b'\n\r')
-                ser.write(b'\n\r--hashsum---\n\r') # hash
+                        wln(content)
+                wln(bytes(chr(3), 'ascii')) # ETX - End of Text
                 time.sleep(0.5)
                 hashsum = m.hexdigest().encode("ascii","ignore")
-                ser.write(hashsum)
-                ser.write(b'\n\r--endfile---\n\r') # hash
+                wln(hashsum)
+                wln(bytes(chr(4), 'ascii')) # EOT - End of Transmission
                 time.sleep(0.5)
                 os.remove(filepath)
                 print("Done.")

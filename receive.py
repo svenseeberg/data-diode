@@ -15,18 +15,19 @@ with serial.Serial(dev, baud) as ser:
     started = False
     while True:
         line = ser.readline().strip().decode('ascii')
-        if(len(line) == 12 and line == "--filename--" ):
+        if(line == chr(1)): # SOH - Start Of Header
             started = True
             filename_b64 = ser.readline().strip()
             filename = base64.b64decode(filename_b64).decode('ascii')
             m.update(filename_b64)
             print("Receiving file %s" % filename)
-        elif(started == True and len(line) == 12 and line == "--content---" ):
+        elif(started == True and line == chr(2)): # STX - Start of Text
+            print("Buffering content.")
             content = b''
             n = 0
             while True:
                 line = ser.readline().strip()
-                if(len(line) == 12 and line == b'--hashsum---'):
+                if(line == bytes(chr(3), 'ascii')): # ETX - End of Text:
                     hashsum = ser.readline().strip()
                     break
                 else:
@@ -36,7 +37,7 @@ with serial.Serial(dev, baud) as ser:
                         content += base64.b64decode(line)
                     except:
                         break
-        elif(started == True and len(line) == 12 and line == "--endfile---" ):
+        elif(started == True and line == chr(4)): # EOT - End of Transmission
             hashsum_received = m.hexdigest().encode("ascii","ignore")
             if(hashsum_received == hashsum):
                 filepath = os.path.join(write_dir, filename)
