@@ -7,6 +7,7 @@ import sys
 import base64
 import hashlib
 import time
+import subprocess
 
 with serial.Serial(sys.argv[1], 57600, timeout=1) as ser:
     def wln(line):
@@ -17,8 +18,16 @@ with serial.Serial(sys.argv[1], 57600, timeout=1) as ser:
     while True:
         for root, dirs, files in os.walk(read_dir):
             for filename in files:
-                print("Sending %s" % filename)
                 filepath = os.path.join(os.environ['HOME'], 'diode-send', filename)
+                try:
+                    stuff = subprocess.check_output(['fuser', filepath])
+                    good = False
+                except subprocess.CalledProcessError:
+                    good = True
+                if not good:
+                    print("Skipping %s, in use." % filename)
+                    continue
+                print("Sending %s" % filename)
                 m = hashlib.md5()
                 filename = base64.b64encode(bytes(filename, 'ascii'))
                 m.update(filename)
@@ -34,11 +43,9 @@ with serial.Serial(sys.argv[1], 57600, timeout=1) as ser:
                         m.update(content)
                         wln(content)
                 wln(bytes(chr(3), 'ascii')) # ETX - End of Text
-                time.sleep(0.5)
                 hashsum = m.hexdigest().encode("ascii","ignore")
                 wln(hashsum)
                 wln(bytes(chr(4), 'ascii')) # EOT - End of Transmission
-                time.sleep(0.5)
                 os.remove(filepath)
                 print("Done.")
-                time.sleep(1)
+        time.sleep(1)
