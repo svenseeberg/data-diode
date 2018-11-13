@@ -26,7 +26,7 @@ void setup()
     status = -status;
     hd44780::fatalError(status);
   }
-  Serial.begin(19200);
+  Serial.begin(57600);
   lcd.print("Idle");
   lcd.setCursor(0,1);
   lcd.print(counter, DEC);

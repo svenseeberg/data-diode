@@ -9,7 +9,7 @@ import hashlib
 
 write_dir = os.path.join(os.environ['HOME'], 'diode-receive')
 
-with serial.Serial(sys.argv[1], 19200) as ser:
+with serial.Serial(sys.argv[1], 57600) as ser:
     m = hashlib.md5()
     started = False
     while True:

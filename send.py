@@ -8,7 +8,7 @@ import base64
 import hashlib
 import time
 
-with serial.Serial(sys.argv[1], 19200, timeout=1) as ser:
+with serial.Serial(sys.argv[1], 57600, timeout=1) as ser:
     def wln(line):
         ser.write(line)
         ser.write(b'\n')
