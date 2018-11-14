@@ -1,0 +1,12 @@
+[Unit]
+Description=Data transmitting daemon for data diode
+After=multi-user.target
+
+[Service]
+Type=idle
+Environment="SCRIPT_ARGS=%I"
+ExecStart=/usr/bin/diode-receive $SCRIPT_ARGS
+User=sender
+
+[Install]
+WantedBy=multi-user.target
