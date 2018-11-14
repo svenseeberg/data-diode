@@ -4,9 +4,8 @@ After=multi-user.target
 
 [Service]
 Type=idle
-Environment="SCRIPT_ARGS=%I"
-ExecStart=/usr/bin/diode-send $SCRIPT_ARGS
-User=receiver
+ExecStart=/usr/bin/diode-send
+User=root
 
 [Install]
 WantedBy=multi-user.target

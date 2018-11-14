@@ -9,16 +9,16 @@ import hashlib
 import time
 import subprocess
 
-with serial.Serial(sys.argv[1], 57600, timeout=1) as ser:
+with serial.Serial('/dev/ttyS0', 57600, timeout=1) as ser:
     def wln(line):
         ser.write(line)
         ser.write(b'\n')
-    read_dir = os.path.join(os.environ['HOME'], 'diode-send')
+    read_dir = '/home/sender/diode-send/'
     print("Scanning %s" % read_dir)
     while True:
         for root, dirs, files in os.walk(read_dir):
             for filename in files:
-                filepath = os.path.join(os.environ['HOME'], 'diode-send', filename)
+                filepath = os.path.join(read_dir, filename)
                 try:
                     stuff = subprocess.check_output(['fuser', filepath])
                     good = False
