@@ -16,6 +16,7 @@ show the status on an 1602 LCD.
 6) Connect the Tx of one Raspberry Pi with the Rx of the other Pi and
    the Arduino. If required, place a diode between the Tx and the Rx
    pins.
+  ![Wiring schema](images/schema.jpg)
 7) Reload the systemd configuration on the Raspberry Pis with
    ```systemctl daemon-reload```. On the Pi that is transmitting,
    run ```systemctl enable diode-send.service```. On the other run
@@ -42,7 +43,7 @@ show the status on an 1602 LCD.
 * 1x large enough case to house everything
 * 2x RJ45 feedthroughs (i.e. Neutrik NE8FDP)
 
-![Connecting the devices](https://raw.githubusercontent.com/svenseeberg/data-diode/master/images/bare_pis.jpg)
+![Connecting the devices](images/bare_pis.jpg)
 
-![Finished Diode](https://raw.githubusercontent.com/svenseeberg/data-diode/master/images/open_case.jpg)
+![Finished Diode](images/open_case.jpg)
 
