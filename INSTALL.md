@@ -45,4 +45,25 @@
 1. Flash the `arduino/arduino.ino` file on the Arduino.
 
 # Diode setup
-1. to be continued
+Clone this repo or download the latest .zip file and extract. Then `cd` into the directory.
+## Receiver setup
+1. Copy the rc.d file:
+   ```
+   cp ./rc.d/diode-receive /etc/rc.d/diode-receive
+   ```
+1. Edit the device paths in `/etc/rc.d/diode-receive`. If you do not have an Arduino with LCD display connected, remove the `--arduino` parameter.
+1. Copy the main program:
+   ```
+   cp ./bin/diode-receive /usr/local/bin/
+   ```
+
+## Sender setup
+1. Copy the rc.d file:
+   ```
+   cp ./rc.d/diode-send /etc/rc.d/diode-receive
+   ```
+1. Edit the device paths in `/etc/rc.d/diode-send`.
+1. Copy the main program:
+   ```
+   cp ./bin/diode-send /usr/local/bin/
+   ```
