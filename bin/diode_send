@@ -15,7 +15,7 @@ PARSER = argparse.ArgumentParser(description='Serial device options')
 PARSER.add_argument('--speed', type=int, nargs='?', required=True,
                     help='serial bit rate, i.e. 9600 or 128000')
 PARSER.add_argument('--device', type=str, nargs='?', required=True,
-                    help='serial device, i.e. /dev/ttyUSB0')
+                    help='serial device, i.e. /dev/cuaU0')
 PARSER.add_argument('--directory', type=str, nargs='?', required=True,
                     help='directory from which to send files')
 

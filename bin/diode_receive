@@ -13,12 +13,26 @@ PARSER = argparse.ArgumentParser(description='Serial device options')
 PARSER.add_argument('--speed', type=int, nargs='?', required=True,
                     help='serial bit rate, i.e. 9600 or 128000')
 PARSER.add_argument('--device', type=str, nargs='?', required=True,
-                    help='serial device, i.e. /dev/ttyUSB0')
+                    help='serial device, i.e. /dev/cuaU0')
+PARSER.add_argument('--arduino', type=str, nargs='?', required=False,
+                    help='serial device, i.e. /dev/cuaU1')
 PARSER.add_argument('--directory', type=str, nargs='?', required=True,
                     help='directory from which to send files')
 
 ARGS = PARSER.parse_args()
 TOTAL_DATA = 0
+TOTAL_FILES = 0
+
+def send_status(state):
+    """
+    Send info to Arduino to update LCD
+    """
+    if ARGS.arduino:
+        with serial.Serial(ARGS.arduino, 57600, timeout=1) as ard:
+            ard.write(state + " " + str(TOTAL_FILES)+"F")
+            ard.write(b'\n')
+            ard.write(str(TOTAL_DATA)+"B")
+            ard.write(b'\n')
 
 with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
     M = hashlib.md5()
@@ -49,6 +63,7 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                     except:  # pylint: disable=W0702
                         break
                     print(TOTAL_DATA)
+                    send_status("Rx")
         elif(STARTED and LINE == chr(4)): # EOT - End of Transmission
             HASHSUM_RECEIVED = M.hexdigest().encode("ascii", "ignore")
             print("Received hash: " + str(HASHSUM_RECEIVED) + ", calculated hash: " + str(HASHSUM))
@@ -72,5 +87,6 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
             HASHSUM_RECEIVED = None
             M = hashlib.md5()
             STARTED = False
+            send_status("Idle")
         else:
             pass
