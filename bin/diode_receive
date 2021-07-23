@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""
+Receive files through unidirectional serial device
+"""
 
 import os
 import base64
@@ -43,9 +46,9 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                         M.update(LINE)
                         CONTENT += base64.b64decode(LINE)
                         TOTAL_DATA = TOTAL_DATA + len(CONTENT)
-                        print(TOTAL_DATA)
-                    except:
+                    except:  # pylint: disable=W0702
                         break
+                    print(TOTAL_DATA)
         elif(STARTED and LINE == chr(4)): # EOT - End of Transmission
             HASHSUM_RECEIVED = M.hexdigest().encode("ascii", "ignore")
             print("Received hash: " + str(HASHSUM_RECEIVED) + ", calculated hash: " + str(HASHSUM))
