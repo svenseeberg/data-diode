@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+
+import os
+import base64
+import hashlib
+import argparse
+import serial
+
+PARSER = argparse.ArgumentParser(description='Serial device options')
+PARSER.add_argument('--speed', type=int, nargs='?', required=True,
+                    help='serial bit rate, i.e. 9600 or 128000')
+PARSER.add_argument('--device', type=str, nargs='?', required=True,
+                    help='serial device, i.e. /dev/ttyUSB0')
+PARSER.add_argument('--directory', type=str, nargs='?', required=True,
+                    help='directory from which to send files')
+
+ARGS = PARSER.parse_args()
+TOTAL_DATA = 0
+
+with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
+    M = hashlib.md5()
+    STARTED = False
+    while True:
+        LINE = ser.readline().strip().decode('ascii')
+        if LINE == chr(1): # SOH - Start Of Header
+            STARTED = True
+            FILENAME_B64 = ser.readline().strip()
+            FILENAME = base64.b64decode(FILENAME_B64).decode('ascii')
+            M.update(FILENAME_B64)
+            print("Receiving file %s" % FILENAME)
+        elif (STARTED and LINE == chr(2)): # STX - Start of Text
+            print("Buffering content.")
+            CONTENT = b''
+            N = 0
+            while True:
+                LINE = ser.readline().strip()
+                if LINE == bytes(chr(3), 'ascii'): # ETX - End of Text:
+                    HASHSUM = ser.readline().strip()
+                    break
+                else:
+                    try:
+                        N = N + 1
+                        M.update(LINE)
+                        CONTENT += base64.b64decode(LINE)
+                        TOTAL_DATA = TOTAL_DATA + len(CONTENT)
+                        print(TOTAL_DATA)
+                    except:
+                        break
+        elif(STARTED and LINE == chr(4)): # EOT - End of Transmission
+            HASHSUM_RECEIVED = M.hexdigest().encode("ascii", "ignore")
+            print("Received hash: " + str(HASHSUM_RECEIVED) + ", calculated hash: " + str(HASHSUM))
+            if HASHSUM_RECEIVED == HASHSUM:
+                FILEPATH = os.path.join(ARGS.directory, FILENAME)
+                print("Hashsums match, writing to %s" % FILEPATH)
+                F = open(FILEPATH, "wb")
+                F.write(CONTENT)
+                F.close()
+                print("Done.")
+            else:
+                print("Hashsums do not match.")
+            CONTENT = None
+            FILENAME = None
+            CONTENT_B64 = None
+            FILENAME_B64 = None
+            HASHSUM = None
+            HASHSUM_RECEIVED = None
+            M = hashlib.md5()
+            STARTED = False
+        else:
+            pass
