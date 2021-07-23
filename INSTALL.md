@@ -67,3 +67,6 @@ Clone this repo or download the latest .zip file and extract. Then `cd` into the
    ```
    cp ./bin/diode-send /usr/local/bin/
    ```
+
+## Adjust transfer speeds
+Transfer some files. If not all they are not appearing on the receiver, there were transmission errors. Reduce the bit rate in the rc.d scripts until you have no transmission errors. Alternatively, improve your hardware setup.
