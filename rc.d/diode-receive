@@ -1,0 +1,12 @@
+#!/bin/ksh
+
+daemon="/usr/local/bin/diode-receive"
+daemon_flags="--directory /var/www/diode --speed 9600 --device /dev/cuaU0 --arduino /dev/cuaU1"
+
+. /etc/rc.d/rc.subr
+
+rc_start() {
+        ${rcexec} "${daemon} ${daemon_flags} 2>&1 | logger -t diode-receive &"
+}
+
+rc_cmd $1
