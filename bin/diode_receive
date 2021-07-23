@@ -54,6 +54,9 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
             print("Received hash: " + str(HASHSUM_RECEIVED) + ", calculated hash: " + str(HASHSUM))
             if HASHSUM_RECEIVED == HASHSUM:
                 FILEPATH = os.path.join(ARGS.directory, FILENAME)
+                print("Write to " + FILEPATH)
+                if os.path.dirname(FILEPATH) and not os.path.exists(os.path.dirname(FILEPATH)):
+                    os.makedirs(os.path.dirname(FILEPATH))
                 print("Hashsums match, writing to %s" % FILEPATH)
                 F = open(FILEPATH, "wb")
                 F.write(CONTENT)

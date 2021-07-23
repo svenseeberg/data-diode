@@ -34,7 +34,8 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
     while True:
         for root, dirs, files in os.walk(ARGS.directory):
             for filename in files:
-                filepath = os.path.join(ARGS.directory, filename)
+                filepath = os.path.join(root, "/".join(dirs), filename)
+                print(filepath)
                 try:
                     stuff = subprocess.check_output(['fuser', filepath])
                     good = False
@@ -43,6 +44,7 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                 if not good:
                     print("Skipping %s, in use." % filename)
                     continue
+                filename = os.path.relpath(filepath, ARGS.directory)
                 print("Sending %s" % filename)
                 m = hashlib.md5()
                 filename = base64.b64encode(bytes(filename, 'ascii'))
