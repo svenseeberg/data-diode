@@ -1,24 +1,37 @@
 #!/usr/bin/env python3
 
-import serial
-from pathlib import Path
 import os
-import sys
 import base64
 import hashlib
 import time
 import subprocess
+import argparse
+import serial
 
-with serial.Serial('/dev/ttyS0', 57600, timeout=1) as ser:
-    def wln(line):
-        ser.write(line)
-        ser.write(b'\n')
-    read_dir = '/home/sender/diode-send/'
-    print("Scanning %s" % read_dir)
+PARSER = argparse.ArgumentParser(description='Serial device options')
+PARSER.add_argument('--speed', type=int, nargs='?', required=True,
+                    help='serial bit rate, i.e. 9600 or 128000')
+PARSER.add_argument('--device', type=str, nargs='?', required=True,
+                    help='serial device, i.e. /dev/ttyUSB0')
+PARSER.add_argument('--directory', type=str, nargs='?', required=True,
+                    help='directory from which to send files')
+
+ARGS = PARSER.parse_args()
+
+def wln(line):
+    """
+    Write line to serial device
+    """
+    ser.write(line)
+    ser.write(b'\n')
+
+
+with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
+    print("Scanning %s" % ARGS.directory)
     while True:
-        for root, dirs, files in os.walk(read_dir):
+        for root, dirs, files in os.walk(ARGS.directory):
             for filename in files:
-                filepath = os.path.join(read_dir, filename)
+                filepath = os.path.join(ARGS.directory, filename)
                 try:
                     stuff = subprocess.check_output(['fuser', filepath])
                     good = False
@@ -31,6 +44,7 @@ with serial.Serial('/dev/ttyS0', 57600, timeout=1) as ser:
                 m = hashlib.md5()
                 filename = base64.b64encode(bytes(filename, 'ascii'))
                 m.update(filename)
+                time.sleep(0.2) # delay sending after detecting for a short time
                 wln(bytes(chr(1), 'ascii')) # SOH - Start Of Header
                 wln(filename)
                 wln(bytes(chr(2), 'ascii')) # STX - Start of Text
@@ -39,11 +53,12 @@ with serial.Serial('/dev/ttyS0', 57600, timeout=1) as ser:
                         content = fo.read(1024)
                         if not content:
                             break
+                        print(fo.tell())
                         content = base64.b64encode(content)
                         m.update(content)
                         wln(content)
                 wln(bytes(chr(3), 'ascii')) # ETX - End of Text
-                hashsum = m.hexdigest().encode("ascii","ignore")
+                hashsum = m.hexdigest().encode("ascii", "ignore")
                 wln(hashsum)
                 wln(bytes(chr(4), 'ascii')) # EOT - End of Transmission
                 os.remove(filepath)
