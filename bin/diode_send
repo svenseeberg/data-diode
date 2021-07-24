@@ -7,17 +7,21 @@ import os
 import base64
 import hashlib
 import time
-import subprocess
 import argparse
 import serial
+from subprocess import Popen, PIPE
 
 PARSER = argparse.ArgumentParser(description='Serial device options')
-PARSER.add_argument('--speed', type=int, nargs='?', required=True,
-                    help='serial bit rate, i.e. 9600 or 128000')
+PARSER.add_argument('--speed', type=int, nargs='?', default=230400,
+                    help='serial bit rate, default 115200')
 PARSER.add_argument('--device', type=str, nargs='?', required=True,
                     help='serial device, i.e. /dev/cuaU0')
 PARSER.add_argument('--directory', type=str, nargs='?', required=True,
                     help='directory from which to send files')
+PARSER.add_argument('--bs', type=int, nargs='?', default=2048,
+                    help='size of file chunks sent through the serial connection')
+PARSER.add_argument('--sleep', type=float, nargs='?', default=0,
+                    help='wait between each chunks')
 
 ARGS = PARSER.parse_args()
 
@@ -31,17 +35,16 @@ def wln(line):
 
 with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
     print("Scanning %s" % ARGS.directory)
+    wln(b'sync ...')
+    time.sleep(0.1)
+    wln(b'Hello world!')
     while True:
         for root, dirs, files in os.walk(ARGS.directory):
             for filename in files:
                 filepath = os.path.join(root, "/".join(dirs), filename)
-                print(filepath)
-                try:
-                    stuff = subprocess.check_output(['fuser', filepath])
-                    good = False
-                except subprocess.CalledProcessError:
-                    good = True
-                if not good:
+                p = Popen(['fuser', filepath], stdout=PIPE)
+                output, err = p.communicate()
+                if output == filepath + ":":
                     print("Skipping %s, in use." % filename)
                     continue
                 filename = os.path.relpath(filepath, ARGS.directory)
@@ -49,19 +52,18 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                 m = hashlib.md5()
                 filename = base64.b64encode(bytes(filename, 'ascii'))
                 m.update(filename)
-                time.sleep(0.2) # delay sending after detecting for a short time
                 wln(bytes(chr(1), 'ascii')) # SOH - Start Of Header
                 wln(filename)
                 wln(bytes(chr(2), 'ascii')) # STX - Start of Text
                 with open(filepath, "rb") as fo:
                     while True:
-                        content = fo.read(1024)
+                        content = fo.read(int(ARGS.bs))
                         if not content:
                             break
-                        print(fo.tell())
                         content = base64.b64encode(content)
                         m.update(content)
                         wln(content)
+                        time.sleep(ARGS.sleep)
                 wln(bytes(chr(3), 'ascii')) # ETX - End of Text
                 hashsum = m.hexdigest().encode("ascii", "ignore")
                 wln(hashsum)

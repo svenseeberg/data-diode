@@ -10,8 +10,8 @@ import argparse
 import serial
 
 PARSER = argparse.ArgumentParser(description='Serial device options')
-PARSER.add_argument('--speed', type=int, nargs='?', required=True,
-                    help='serial bit rate, i.e. 9600 or 128000')
+PARSER.add_argument('--speed', type=int, nargs='?', default=230400,
+                    help='serial bit rate, default 115200')
 PARSER.add_argument('--device', type=str, nargs='?', required=True,
                     help='serial device, i.e. /dev/cuaU0')
 PARSER.add_argument('--arduino', type=str, nargs='?', required=False,
@@ -21,22 +21,25 @@ PARSER.add_argument('--directory', type=str, nargs='?', required=True,
 
 ARGS = PARSER.parse_args()
 TOTAL_DATA = 0
-TOTAL_FILES = 0
+FILES_TOTAL = 0
+FILES_ERROR = 0
+
+ARDUINO = serial.Serial(ARGS.arduino, 9600, timeout=1)
 
 def send_status(state):
     """
     Send info to Arduino to update LCD
     """
     if ARGS.arduino:
-        with serial.Serial(ARGS.arduino, 57600, timeout=1) as ard:
-            ard.write(state + " " + str(TOTAL_FILES)+"F")
-            ard.write(b'\n')
-            ard.write(str(TOTAL_DATA)+"B")
-            ard.write(b'\n')
+        line1 = state + " " + str(FILES_TOTAL)+"F " +  str(FILES_ERROR)+"E".ljust(16)
+        line2 = str(int(TOTAL_DATA/1024)) + " KB".ljust(16)
+        ARDUINO.write(bytes(line1+'\n', 'ascii'))
+        ARDUINO.write(bytes(line2+'\n', 'ascii'))
 
 with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
     M = hashlib.md5()
     STARTED = False
+    send_status("Wait")
     while True:
         LINE = ser.readline().strip().decode('ascii')
         if LINE == chr(1): # SOH - Start Of Header
@@ -47,6 +50,7 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
             print("Receiving file %s" % FILENAME)
         elif (STARTED and LINE == chr(2)): # STX - Start of Text
             print("Buffering content.")
+            send_status("Rx  ")
             CONTENT = b''
             N = 0
             while True:
@@ -55,30 +59,24 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                     HASHSUM = ser.readline().strip()
                     break
                 else:
-                    try:
-                        N = N + 1
-                        M.update(LINE)
-                        CONTENT += base64.b64decode(LINE)
-                        TOTAL_DATA = TOTAL_DATA + len(CONTENT)
-                    except:  # pylint: disable=W0702
-                        break
-                    print(TOTAL_DATA)
-                    send_status("Rx")
+                    N = N + 1
+                    M.update(LINE)
+                    CONTENT += base64.b64decode(LINE)
+                    TOTAL_DATA = TOTAL_DATA + len(CONTENT)
         elif(STARTED and LINE == chr(4)): # EOT - End of Transmission
             HASHSUM_RECEIVED = M.hexdigest().encode("ascii", "ignore")
-            print("Received hash: " + str(HASHSUM_RECEIVED) + ", calculated hash: " + str(HASHSUM))
             if HASHSUM_RECEIVED == HASHSUM:
                 FILEPATH = os.path.join(ARGS.directory, FILENAME)
-                print("Write to " + FILEPATH)
                 if os.path.dirname(FILEPATH) and not os.path.exists(os.path.dirname(FILEPATH)):
                     os.makedirs(os.path.dirname(FILEPATH))
                 print("Hashsums match, writing to %s" % FILEPATH)
                 F = open(FILEPATH, "wb")
                 F.write(CONTENT)
                 F.close()
-                print("Done.")
+                FILES_TOTAL = FILES_TOTAL + 1
             else:
                 print("Hashsums do not match.")
+                FILES_ERROR = FILES_ERROR + 1
             CONTENT = None
             FILENAME = None
             CONTENT_B64 = None
@@ -87,6 +85,6 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
             HASHSUM_RECEIVED = None
             M = hashlib.md5()
             STARTED = False
-            send_status("Idle")
+            send_status("Wait")
         else:
             pass
