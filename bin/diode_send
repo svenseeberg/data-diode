@@ -13,12 +13,12 @@ from subprocess import Popen, PIPE
 
 PARSER = argparse.ArgumentParser(description='Serial device options')
 PARSER.add_argument('--speed', type=int, nargs='?', default=230400,
-                    help='serial bit rate, default 115200')
+                    help='serial bit rate, default 230400')
 PARSER.add_argument('--device', type=str, nargs='?', required=True,
                     help='serial device, i.e. /dev/cuaU0')
 PARSER.add_argument('--directory', type=str, nargs='?', required=True,
                     help='directory from which to send files')
-PARSER.add_argument('--bs', type=int, nargs='?', default=2048,
+PARSER.add_argument('--bs', type=int, nargs='?', default=16384,
                     help='size of file chunks sent through the serial connection')
 PARSER.add_argument('--sleep', type=float, nargs='?', default=0,
                     help='wait between each chunks')
