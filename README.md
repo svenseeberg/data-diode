@@ -1,4 +1,4 @@
-# About
+## About
 This project contains the source code for a DIY data diode. It uses
 Raspberry Pis to transmit data via the serial interface from one to
 the other. An Arduino device can be used to monitor the traffic and
@@ -6,14 +6,13 @@ show the status on an 1602 LCD.
 
 ![Finished Diode](images/case.jpg)
 
-# Software Installation
+## Software Installation
 For details about the installation, read [INSTALL.md](INSTALL.md).
 
-# Hardware Setup
-## Required Parts
+## Required Hardware
 * 2x Raspberry Pi 4B
 * 2x UART USB adapters
-## Optional Parts
+## Optional Hardware
 * 1x Arduino
 * 1x 1602 LCD with I2C
 * 1x Diode
