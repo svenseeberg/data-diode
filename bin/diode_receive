@@ -8,6 +8,7 @@ import base64
 import hashlib
 import argparse
 import serial
+import time
 
 PARSER = argparse.ArgumentParser(description='Serial device options')
 PARSER.add_argument('--speed', type=int, nargs='?', default=230400,
@@ -24,7 +25,7 @@ TOTAL_DATA = 0
 FILES_TOTAL = 0
 FILES_ERROR = 0
 
-ARDUINO = serial.Serial(ARGS.arduino, 9600, timeout=1)
+ARDUINO = serial.Serial(ARGS.arduino, 38400, timeout=1)
 
 def send_status(state):
     """
@@ -39,6 +40,7 @@ def send_status(state):
 with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
     M = hashlib.md5()
     STARTED = False
+    time.sleep(3)
     send_status("Wait")
     while True:
         LINE = ser.readline().strip().decode('ascii')
@@ -62,7 +64,9 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                     N = N + 1
                     M.update(LINE)
                     CONTENT += base64.b64decode(LINE)
-                    TOTAL_DATA = TOTAL_DATA + len(CONTENT)
+                    TOTAL_DATA = TOTAL_DATA + len(LINE)
+                    send_status("Rx  ")
+                LINE = None
         elif(STARTED and LINE == chr(4)): # EOT - End of Transmission
             HASHSUM_RECEIVED = M.hexdigest().encode("ascii", "ignore")
             if HASHSUM_RECEIVED == HASHSUM:

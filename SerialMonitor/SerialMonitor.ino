@@ -23,7 +23,7 @@ void setup()
     status = -status;
     hd44780::fatalError(status);
   }
-  Serial.begin(9600);
+  Serial.begin(38400);
   lcd.print("Booting ...");
   lcd.setCursor(0,0);
 }
