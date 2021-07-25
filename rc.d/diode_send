@@ -1,7 +1,7 @@
 #!/bin/ksh
 
-daemon="/usr/local/bin/diode-receive"
-daemon_flags="--directory /var/www/diode --speed 9600 --device /dev/cuaU0 --arduino /dev/cuaU1"
+daemon="/usr/local/bin/diode_send"
+daemon_flags="--directory /var/www/diode --device /dev/cuaU0"
 
 . /etc/rc.d/rc.subr
 

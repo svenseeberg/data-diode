@@ -49,23 +49,35 @@ Clone this repo or download the latest .zip file and extract. Then `cd` into the
 ## Receiver setup
 1. Copy the rc.d file:
    ```
-   cp ./rc.d/diode-receive /etc/rc.d/diode-receive
+   cp ./rc.d/diode_receive /etc/rc.d/
    ```
-1. Edit the device paths in `/etc/rc.d/diode-receive`. If you do not have an Arduino with LCD display connected, remove the `--arduino` parameter.
+1. Edit the device paths in `/etc/rc.d/diode_receive`. If you do not have an Arduino with LCD display connected, remove the `--arduino` parameter.
+1. Create the directory to which the received files are written.
 1. Copy the main program:
    ```
-   cp ./bin/diode-receive /usr/local/bin/
+   cp ./bin/diode_receive /usr/local/bin/
+   ```
+1. Enable the service:
+   ```
+   rcctl enable diode_receive
+   rcctl start diode_receive
    ```
 
 ## Sender setup
 1. Copy the rc.d file:
    ```
-   cp ./rc.d/diode-send /etc/rc.d/diode-receive
+   cp ./rc.d/diode_send /etc/rc.d/
    ```
-1. Edit the device paths in `/etc/rc.d/diode-send`.
+1. Edit the device paths in `/etc/rc.d/diode_send`.
+1. Create the directory from wich the files are read.
 1. Copy the main program:
    ```
-   cp ./bin/diode-send /usr/local/bin/
+   cp ./bin/diode_send /usr/local/bin/
+   ```
+1. Enable the service:
+   ```
+   rcctl enable diode_send
+   rcctl start diode_send
    ```
 
 ## Adjust transfer speeds
