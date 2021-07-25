@@ -63,8 +63,9 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                 else:
                     N = N + 1
                     M.update(LINE)
-                    CONTENT += base64.b64decode(LINE)
-                    TOTAL_DATA = TOTAL_DATA + len(LINE)
+                    LINE_DECODED = base64.b64decode(LINE)
+                    CONTENT += LINE_DECODED
+                    TOTAL_DATA = TOTAL_DATA + len(LINE_DECODED)
                     send_status("Rx  ")
                 LINE = None
         elif(STARTED and LINE == chr(4)): # EOT - End of Transmission
