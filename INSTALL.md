@@ -38,11 +38,12 @@
 1. Change the boot order to boot the OpenBSD efi file first.
 
 # Hardware setup
-1. Attach one USB UART (a) adapter to sending RPi, and two USB UART (b & c) adapters to the receiving RPi.
-1. Connect the ground of (a) to the ground of (b).
-1. Connect Tx of (a) to Rx of (b).
-1. Connect Ground of (c) to the ground of the Arduino, then connect Tx and Rx of (c) to Rx and Tx of the Arduino.
+1. Attach one UART adapter to each RPi.
+1. Connect the ground pins of both UART adapters.
+1. Connect the Tx pin of the sending RPi to the Rx pin of the receiving RPi.
 1. Flash the `arduino/arduino.ino` file on the Arduino.
+1. Connect the Arduino via USB to the receiving RPi.
+1. Set up the power supply for both RPis.
 
 # Diode setup
 Clone this repo or download the latest .zip file and extract. Then `cd` into the directory.
