@@ -6,6 +6,12 @@ show the status on an 1602 LCD.
 
 ![Finished Diode](images/case.jpg)
 
+The software is primarily developed for OpenBSD but will also work
+on Raspbian or Debian. OpenBSD seems better suited as it is easier
+to maintain a mirror repository of the core operating system and
+selected packages. A simple script to download the required files
+and copy them through the diode is included.
+
 ## Software Installation
 For details about the installation, read [INSTALL.md](INSTALL.md).
 

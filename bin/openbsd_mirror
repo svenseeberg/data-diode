@@ -1,0 +1,28 @@
+#!/bin/bash
+. /etc/openbsd-mirror.conf
+
+cd $TARGET_PATH
+
+for ARCH in $ARCH_LIST; do
+  # Download installation files, kernel, etc
+  wget -q -nH -nc -r --no-parent https://cdn.openbsd.org/pub/OpenBSD/$VERSION/$ARCH/ -R $CORE_REJECT
+
+  # Download syspatch directory
+  wget -q -nH -nc -r --no-parent https://cdn.openbsd.org/pub/OpenBSD/syspatch/$VERSION/$ARCH/ -R "index.html*"
+
+  PACKAGES=""
+  # Resolve package dependencies and grep base name without version extension
+  MAN_PACKAGES=${PKG_LIST[$ARCH]}
+  for PACKAGE in $MAN_PACKAGES; do
+    PACKAGES_NEW=$(pkg_add -n -A $ARCH $PACKAGE | grep "\-\-\- " | cut -d ' ' -f 2 | sed -E "s/[0-9\-\.vp]+$//g" | tr '\n' ' ')
+    PACKAGES="$PACKAGES $PACKAGES_NEW"
+  done
+  # Download accepted packages
+  PACKAGES=$(echo $PACKAGES | sed "s/ /\|/g")
+  REGEX=".*\/($PACKAGES)[0-9\.\-pv].+\.tgz$"
+  wget -q -nH -nc -r --no-parent https://cdn.openbsd.org/pub/OpenBSD/$VERSION/packages/$ARCH/ --accept-regex $REGEX -R "index.html*"
+  wget -q -nH -nc -r --no-parent https://cdn.openbsd.org/pub/OpenBSD/$VERSION/packages-stable/$ARCH/ --accept-regex $REGEX -R "index.html*"
+done
+
+# Copy all newly downloaded files into the diode send path
+find . -cmin -30 -exec cp -r {} $DIODE_PATH \;
