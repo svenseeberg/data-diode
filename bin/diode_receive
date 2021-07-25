@@ -32,8 +32,8 @@ def send_status(state):
     Send info to Arduino to update LCD
     """
     if ARGS.arduino:
-        line1 = state + " " + str(FILES_TOTAL)+"F " +  str(FILES_ERROR)+"E".ljust(16)
-        line2 = str(int(TOTAL_DATA/1024)) + " KB".ljust(16)
+        line1 = (state + " " + str(FILES_TOTAL)+"F " + str(FILES_ERROR)+"E").ljust(16)
+        line2 = (str(int(TOTAL_DATA/1024)) + " KB").ljust(16)
         ARDUINO.write(bytes(line1+'\n', 'ascii'))
         ARDUINO.write(bytes(line2+'\n', 'ascii'))
 
