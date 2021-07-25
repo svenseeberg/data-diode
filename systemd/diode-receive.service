@@ -4,7 +4,7 @@ After=multi-user.target
 
 [Service]
 Type=idle
-ExecStart=/usr/bin/diode-receive
+ExecStart=/usr/local/bin/diode_receive --directory /var/www/diode --device /dev/ttyUSB0 --arduino /dev/ttyUSB1
 User=root
 
 [Install]
