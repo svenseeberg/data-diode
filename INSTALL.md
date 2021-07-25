@@ -50,7 +50,7 @@ Clone this repo or download the latest .zip file and extract. Then `cd` into the
 ## Receiver setup
 1. Copy the rc.d file:
    ```
-   cp ./rc.d/diode_receive /etc/rc.d/
+   cp ./etc/rc.d/diode_receive /etc/rc.d/
    ```
 1. Edit the device paths in `/etc/rc.d/diode_receive`. If you do not have an Arduino with LCD display connected, remove the `--arduino` parameter.
 1. Create the directory to which the received files are written.
@@ -67,7 +67,7 @@ Clone this repo or download the latest .zip file and extract. Then `cd` into the
 ## Sender setup
 1. Copy the rc.d file:
    ```
-   cp ./rc.d/diode_send /etc/rc.d/
+   cp ./etc/rc.d/diode_send /etc/rc.d/
    ```
 1. Edit the device paths in `/etc/rc.d/diode_send`.
 1. Create the directory from wich the files are read.
