@@ -20,4 +20,4 @@ For details about the installation, read [INSTALL.md](INSTALL.md).
 * 1x large enough case to house everything
 * 2x RJ45 feedthroughs (i.e. Neutrik NE8FDP)
 
-![Finished Diode](images/inside.jpg)
+![images/inside](images/inside.jpg)
