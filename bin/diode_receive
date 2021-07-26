@@ -2,17 +2,19 @@
 """
 Receive files through unidirectional serial device
 """
+# pylint: disable=W0603
+
 
 import os
 import base64
 import hashlib
 import argparse
-import serial
 import time
+import serial
 
 PARSER = argparse.ArgumentParser(description='Serial device options')
-PARSER.add_argument('--speed', type=int, nargs='?', default=230400,
-                    help='serial bit rate, default 230400')
+PARSER.add_argument('--speed', type=int, nargs='?', default=115200,
+                    help='serial bit rate, default 115200')
 PARSER.add_argument('--device', type=str, nargs='?', required=True,
                     help='serial device, i.e. /dev/cuaU0')
 PARSER.add_argument('--arduino', type=str, nargs='?', required=False,
@@ -32,10 +34,38 @@ def send_status(state):
     Send info to Arduino to update LCD
     """
     if ARGS.arduino:
+        data_kb = int(TOTAL_DATA/1024)
         line1 = (state + " " + str(FILES_TOTAL)+"F " + str(FILES_ERROR)+"E").ljust(16)
-        line2 = (str(int(TOTAL_DATA/1024)) + " KB").ljust(16)
+        line2 = (str(data_kb) + " KB").ljust(16)
         ARDUINO.write(bytes(line1+'\n', 'ascii'))
         ARDUINO.write(bytes(line2+'\n', 'ascii'))
+
+def reset(success):
+    """
+    reset status variables
+    """
+    global CONTENT
+    CONTENT = None
+    global FILENAME
+    FILENAME = None
+    global FILENAME_B64
+    FILENAME_B64 = None
+    global HASHSUM
+    HASHSUM = None
+    global HASHSUM_RECEIVED
+    HASHSUM_RECEIVED = None
+    global M
+    M = hashlib.md5()
+    global STARTED
+    STARTED = False
+    global FILES_TOTAL
+    FILES_TOTAL = FILES_TOTAL + 1
+    if not success:
+        global FILES_ERROR
+        FILES_ERROR = FILES_ERROR + 1
+    global ARDUINO
+    ARDUINO.close() # Hack to fix garbled display
+    ARDUINO = serial.Serial(ARGS.arduino, 38400, timeout=1)
 
 with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
     M = hashlib.md5()
@@ -63,11 +93,14 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                 else:
                     N = N + 1
                     M.update(LINE)
-                    LINE_DECODED = base64.b64decode(LINE)
+                    try:
+                        LINE_DECODED = base64.b64decode(LINE)
+                    except base64.binascii.Error:
+                        reset(False)
+                        break
                     CONTENT += LINE_DECODED
                     TOTAL_DATA = TOTAL_DATA + len(LINE_DECODED)
                     send_status("Rx  ")
-                LINE = None
         elif(STARTED and LINE == chr(4)): # EOT - End of Transmission
             HASHSUM_RECEIVED = M.hexdigest().encode("ascii", "ignore")
             if HASHSUM_RECEIVED == HASHSUM:
@@ -78,18 +111,11 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                 F = open(FILEPATH, "wb")
                 F.write(CONTENT)
                 F.close()
-                FILES_TOTAL = FILES_TOTAL + 1
+                reset(True)
             else:
                 print("Hashsums do not match.")
-                FILES_ERROR = FILES_ERROR + 1
-            CONTENT = None
-            FILENAME = None
-            CONTENT_B64 = None
-            FILENAME_B64 = None
-            HASHSUM = None
-            HASHSUM_RECEIVED = None
-            M = hashlib.md5()
-            STARTED = False
+                reset(False)
             send_status("Wait")
         else:
-            pass
+            send_status("Wait")
+            time.sleep(0.1)

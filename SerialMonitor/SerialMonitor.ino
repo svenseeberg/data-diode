@@ -9,8 +9,6 @@ const int LCD_COLS = 16;
 const int LCD_ROWS = 2;
 
 int line = 0;
-int pos = 0;
-
 int incomingByte = 0;
 
 void setup()
@@ -24,7 +22,9 @@ void setup()
     hd44780::fatalError(status);
   }
   Serial.begin(38400);
-  lcd.print("Booting ...");
+  if(!Serial) {
+    lcd.print("Booting ...");
+  }
   lcd.setCursor(0,0);
 }
 
@@ -38,7 +38,6 @@ void toggle_line() {
   } else {
     line = 0;
   }
-  pos = 0;
   lcd.setCursor(0,line);
 }
 
