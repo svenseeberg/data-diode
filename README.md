@@ -40,7 +40,7 @@ For details about the installation, read [INSTALL.md](INSTALL.md).
 
 ## Required Hardware
 * 2x Raspberry Pi 4B
-* 2x UART USB adapters
+* 2x USB UART serial adapters
 ## Optional Hardware
 * 1x Arduino
 * 1x 1602 LCD with I2C
