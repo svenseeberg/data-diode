@@ -26,17 +26,25 @@ ARGS = PARSER.parse_args()
 TOTAL_DATA = 0
 FILES_TOTAL = 0
 FILES_ERROR = 0
+FILE_SIZE = 0
+TRANSFERRED_DATA = 0
 
 ARDUINO = serial.Serial(ARGS.arduino, 38400, timeout=1)
 
-def send_status(state):
+def send_status(state_id):
     """
     Send info to Arduino to update LCD
     """
     if ARGS.arduino:
+        if state_id == 1:
+            state = "Rx   "
+            progress = int((TRANSFERRED_DATA / FILE_SIZE)*100)
+        else:
+            state = "Wait "
         data_kb = int(TOTAL_DATA/1024)
-        line1 = (state + " " + str(FILES_TOTAL)+"F " + str(FILES_ERROR)+"E").ljust(16)
-        line2 = (str(data_kb) + " KB").ljust(16)
+        line1 = (state + str(FILES_TOTAL)+"F " + str(FILES_ERROR)+"E")
+        line2 = (str(data_kb) + "KB" + (" " + str(progress) + "%" if
+                                        state_id == 1 else ""))
         ARDUINO.write(bytes(line1+'\n', 'ascii'))
         ARDUINO.write(bytes(line2+'\n', 'ascii'))
 
@@ -58,31 +66,36 @@ def reset(success):
     M = hashlib.md5()
     global STARTED
     STARTED = False
+    global FILE_SIZE
+    FILE_SIZE = 0
+    global TRANSFERRED_DATA
+    TRANSFERRED_DATA = 0
     global FILES_TOTAL
     FILES_TOTAL = FILES_TOTAL + 1
     if not success:
         global FILES_ERROR
         FILES_ERROR = FILES_ERROR + 1
     global ARDUINO
-    ARDUINO.close() # Hack to fix garbled display
-    ARDUINO = serial.Serial(ARGS.arduino, 38400, timeout=1)
+    ARDUINO.write(bytes('               \n', 'ascii'))
+    ARDUINO.write(bytes('               \n', 'ascii'))
 
 with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
     M = hashlib.md5()
     STARTED = False
     time.sleep(3)
-    send_status("Wait")
+    send_status(0)
     while True:
         LINE = ser.readline().strip().decode('ascii')
         if LINE == chr(1): # SOH - Start Of Header
             STARTED = True
-            FILENAME_B64 = ser.readline().strip()
+            FILENAME_B64, FILE_SIZE = ser.readline().strip().split(b" ")
+            FILE_SIZE = int(FILE_SIZE)
             FILENAME = base64.b64decode(FILENAME_B64).decode('ascii')
             M.update(FILENAME_B64)
-            print("Receiving file %s" % FILENAME)
+            print("INFO: Receiving file %s" % FILENAME)
         elif (STARTED and LINE == chr(2)): # STX - Start of Text
-            print("Buffering content.")
-            send_status("Rx  ")
+            print("INFO: Buffering content.")
+            send_status(1)
             CONTENT = b''
             N = 0
             while True:
@@ -96,26 +109,28 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                     try:
                         LINE_DECODED = base64.b64decode(LINE)
                     except base64.binascii.Error:
+                        print("ERROR: Cannot decode Base64.")
                         reset(False)
                         break
                     CONTENT += LINE_DECODED
+                    TRANSFERRED_DATA = TRANSFERRED_DATA + len(LINE_DECODED)
                     TOTAL_DATA = TOTAL_DATA + len(LINE_DECODED)
-                    send_status("Rx  ")
+                    send_status(1)
         elif(STARTED and LINE == chr(4)): # EOT - End of Transmission
             HASHSUM_RECEIVED = M.hexdigest().encode("ascii", "ignore")
             if HASHSUM_RECEIVED == HASHSUM:
                 FILEPATH = os.path.join(ARGS.directory, FILENAME)
                 if os.path.dirname(FILEPATH) and not os.path.exists(os.path.dirname(FILEPATH)):
                     os.makedirs(os.path.dirname(FILEPATH))
-                print("Hashsums match, writing to %s" % FILEPATH)
+                print("INFO: Hashsums match, writing to %s" % FILEPATH)
                 F = open(FILEPATH, "wb")
                 F.write(CONTENT)
                 F.close()
                 reset(True)
             else:
-                print("Hashsums do not match.")
+                print("ERROR: Hashsums do not match.")
                 reset(False)
-            send_status("Wait")
+            send_status(0)
         else:
-            send_status("Wait")
+            send_status(0)
             time.sleep(0.1)

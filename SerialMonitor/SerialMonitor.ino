@@ -22,14 +22,19 @@ void setup()
     hd44780::fatalError(status);
   }
   Serial.begin(38400);
-  if(!Serial) {
-    lcd.print("Booting ...");
-  }
+  lcd.print("Booting...");
   lcd.setCursor(0,0);
 }
 
 void loop() {
-
+  while (Serial.available()) {
+    char inChar = (char)Serial.read();
+    if (inChar == char('\n')) {
+      toggle_line();
+    } else {
+      lcd.print(inChar);
+    }
+  }
 }
 
 void toggle_line() {
@@ -39,16 +44,4 @@ void toggle_line() {
     line = 0;
   }
   lcd.setCursor(0,line);
-}
-
-void serialEvent() {
-  while (Serial.available()) {
-    char inChar = (char)Serial.read();
-    Serial.print(inChar);
-    if (inChar == char('\n')) {
-      toggle_line();
-    } else {
-      lcd.print(inChar);
-    }
-  }
 }

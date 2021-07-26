@@ -46,15 +46,16 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                 p = Popen(['fuser', filepath], stdout=PIPE)
                 output, err = p.communicate()
                 if output == filepath + ":":
-                    print("Skipping %s, in use." % filename)
+                    print("ERROR: Skipping %s, in use." % filename)
                     continue
                 filename = os.path.relpath(filepath, ARGS.directory)
-                print("Sending %s" % filename)
+                print("INFO: Sending %s" % filename)
                 m = hashlib.md5()
+                filesize = " " + str(os.stat(filepath).st_size)
                 filename = base64.b64encode(bytes(filename, 'ascii'))
                 m.update(filename)
                 wln(bytes(chr(1), 'ascii')) # SOH - Start Of Header
-                wln(filename)
+                wln(filename+bytes(filesize, 'ascii'))
                 wln(bytes(chr(2), 'ascii')) # STX - Start of Text
                 with open(filepath, "rb") as fo:
                     while True:
@@ -70,5 +71,5 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                 wln(hashsum)
                 wln(bytes(chr(4), 'ascii')) # EOT - End of Transmission
                 os.remove(filepath)
-                print("Done.")
+                print("INFO: Done.")
         time.sleep(1)
