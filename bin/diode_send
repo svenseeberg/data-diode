@@ -41,7 +41,7 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
     while True:
         for root, dirs, files in os.walk(ARGS.directory):
             for filename in files:
-                filepath = os.path.join(root, "/".join(dirs), filename)
+                filepath = os.path.join(root, filename)
                 p = Popen(['fuser', filepath], stdout=PIPE)
                 output, err = p.communicate()
                 if output == filepath + ":":
