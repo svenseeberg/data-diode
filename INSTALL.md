@@ -41,7 +41,7 @@
 1. Attach one UART adapter to each RPi.
 1. Connect the ground pins of both UART adapters.
 1. Connect the Tx pin of the sending RPi to the Rx pin of the receiving RPi.
-1. If you want to physically guarantee that there is no reverse channel, you can add a diode with a pull down or pull up resistor betwen the Tx and Rx pins. Alternatively, an optocoupler can be used to galvanically separate the circuits.
+1. If you want to physically guarantee that there is no reverse channel, you can add a diode with a pull down or pull up resistor betwen the Tx and Rx pins. Alternatively, an optocoupler can be used to galvanically separate the circuits. Don't forget to [disconnect the bluetooth and WLAN antennae](https://raspberrypi.stackexchange.com/questions/114596/desolder-wifi-bluetooth-module-on-a-raspberry-pi-4).
 1. Flash the `arduino/arduino.ino` file on the Arduino.
 1. Connect the Arduino via USB to the receiving RPi.
 1. Set up the power supply for both RPis.
