@@ -14,6 +14,10 @@ to maintain a mirror repository of the core operating system and
 selected packages. A simple script to download the required files
 and copy them through the diode is included.
 
+I recommend to also look into 
+[wavestone-cdt/dyode](https://github.com/wavestone-cdt/dyode),
+which is a very similar project.
+
 ## How it works
 The sending Raspberry Pi continuously checks a directory for new files.
 Files can be dropped into this directory with any protocol. If a new
