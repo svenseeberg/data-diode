@@ -39,17 +39,20 @@ USB UART adapters, a data rate of about 20KB/s can be achieved. This is
 fast enough to keep a mirror of OpenBSD with a selected subset of
 packages up to date in an internal network.
 
-## Software Installation
+## Installation instructions
 For details about the installation, read [INSTALL.md](INSTALL.md).
 
 ## Required Hardware
 * 2x Raspberry Pi 4B
 * 2x USB UART serial adapters
+* 2x USB-C cables
+* 2x female-female jumper wires
+* 1x USB power supply with 2 outlets
+
 ## Optional Hardware
-* 1x Arduino
+* 1x Arduino including USB cable
 * 1x 1602 LCD with I2C
-* 1x Diode
-* 1x USB power supply with 3 outlets
+* 1x Optocoupler or diode + resistor
 * 1x large enough case to house everything
 * 2x RJ45 feedthroughs (i.e. Neutrik NE8FDP)
 
