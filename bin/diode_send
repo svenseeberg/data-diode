@@ -72,4 +72,5 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                 wln(bytes(chr(4), 'ascii')) # EOT - End of Transmission
                 os.remove(filepath)
                 print("INFO: Done.")
+                time.sleep(5)
         time.sleep(1)
