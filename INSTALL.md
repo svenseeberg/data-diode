@@ -25,7 +25,15 @@
    ```
    sudo mount /dev/mmcblk0p1 /mnt
    sudo cp /tmp/rpi-firmware/* /mnt/
-   sudo umount /mnt
+   ```
+1. Edit the `/mnt/config.txt` and disable the WIFI and Bluetooth adapters by adding the following lines:
+   ```
+   dtoverlay=disable-wifi
+   dtoverlay=disable-bt
+   ```
+1. Unmount the SD card:
+   ```
+   sudo umount /mnt/
    ```
 1. Plug the SD card and USB drive into the RPi.
 
@@ -33,7 +41,7 @@
 1. When the UEFI logo appears, hit the ESC key to enter the setup.
 1. Use the boot options to boot the USB drive.  If problems occur, have a look at [AshyIsMe/openbsd-rpi4](https://github.com/AshyIsMe/openbsd-rpi4).
 1. Run the installer and install OpenBSD to suite your needs. The default settings should be fine in most cases.
-1. If you did overwrite the boot partition during installation, copy the files from `/tmp/rpi-firmware/` into the boot partition again.
+1. If you did overwrite the boot partition during installation, copy the files from `/tmp/rpi-firmware/` into the boot partition again. Don't forget to edit the `config.txt`.
 1. Go to the UEFI "Boot Maintenance Manager" > "Boot Options" and create a new boot entry with the EFI file.
 1. Change the boot order to boot the OpenBSD efi file first.
 
