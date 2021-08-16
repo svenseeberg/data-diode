@@ -20,4 +20,4 @@ for ARCH in $ARCH_LIST; do
 done
 
 # Copy all newly downloaded files into the diode send path
-find . -type f -cmin -30 -exec cp -r {} $DIODE_PATH/{} \;
+find -L . -type f -cmin -30 -exec cp -r {} $DIODE_PATH/{} \;
