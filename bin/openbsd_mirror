@@ -14,25 +14,10 @@ for ARCH in $ARCH_LIST; do
   # Download syspatch directory
   wget -q -nH -nc -r --no-parent https://cdn.openbsd.org/pub/OpenBSD/syspatch/$VERSION/$ARCH/ -R "index.html*"
 
-  PACKAGES=""
-  # Resolve package dependencies and grep base name without version extension
-  MAN_PACKAGES=${PKG_LIST[$ARCH]}
-  for PACKAGE in $MAN_PACKAGES; do
-    CUR_ARCH=$(arch -s)
-    if [[ "$CUR_ARCH" == "${PKG_ARCH_MAP[$ARCH]}" ]]; then
-      PACKAGES_NEW=$(pkg_info -f $PACKAGE | grep '@depend' | cut -f 3 -d ':' | sed -E "s/[0-9\-\.vp]+$//g" | sed "s/\-$//g" | tr '\n' ' ')
-    else
-      PACKAGES_NEW=$(pkg_add -n -A ${PKG_ARCH_MAP[$ARCH]} $PACKAGE | grep "\-\-\- " | cut -d ' ' -f 2 | sed -E "s/[0-9\-\.vp]+$//g" | sed "s/\-$//g" | tr '\n' ' ')
-    fi
-    PACKAGE=$(echo $PACKAGE | sed "s/\-\-//g")
-    PACKAGES="$PACKAGES $PACKAGES_NEW $PACKAGE"
-  done
-  # Download accepted packages
-  PACKAGES=$(echo $PACKAGES | sed "s/ /\|/g")
-  REGEX=".*\/($PACKAGES)[0-9\.\-pv].+\.tgz$"
-  wget -q -nH -nc -r --no-parent https://cdn.openbsd.org/pub/OpenBSD/$VERSION/packages/${PKG_ARCH_MAP[$ARCH]}/ --accept-regex $REGEX -R "index.html*"
-  wget -q -nH -nc -r --no-parent https://cdn.openbsd.org/pub/OpenBSD/$VERSION/packages-stable/${PKG_ARCH_MAP[$ARCH]}/ --accept-regex $REGEX -R "index.html*"
+  # Download packages, filtered with regex.
+  wget -q -nH -nc -r --no-parent https://cdn.openbsd.org/pub/OpenBSD/$VERSION/packages/${PKG_ARCH_MAP[$ARCH]}/ --accept-regex ${PKG_FILTER_REGEX[$ARCH]} -R "index.html*"
+  wget -q -nH -nc -r --no-parent https://cdn.openbsd.org/pub/OpenBSD/$VERSION/packages-stable/${PKG_ARCH_MAP[$ARCH]}/ --accept-regex ${PKG_FILTER_REGEX[$ARCH]} -R "index.html*"
 done
 
 # Copy all newly downloaded files into the diode send path
-find . -cmin -30 -exec cp -r {} $DIODE_PATH \;
+find . -type f -cmin -30 -exec cp -r {} $DIODE_PATH/{} \;
