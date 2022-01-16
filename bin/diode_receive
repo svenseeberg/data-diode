@@ -6,11 +6,25 @@ Receive files through unidirectional serial device
 
 
 import os
+import sys
 import base64
 import hashlib
 import argparse
 import time
+import logging
+import logging.handlers
 import serial
+
+DIODE_LOGGER = logging.getLogger('DIODE')
+DIODE_LOGGER.setLevel(logging.INFO)
+LOGGING_FORMATTER = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+SYSLOG_HANDLER = logging.handlers.SysLogHandler(address='/dev/log')
+SYSLOG_HANDLER.setFormatter(LOGGING_FORMATTER)
+STDERR_HANDLER = logging.StreamHandler(sys.stderr)
+STDERR_HANDLER.setLevel(logging.DEBUG)
+STDERR_HANDLER.setFormatter(LOGGING_FORMATTER)
+DIODE_LOGGER.addHandler(SYSLOG_HANDLER)
+DIODE_LOGGER.addHandler(STDERR_HANDLER)
 
 PARSER = argparse.ArgumentParser(description='Serial device options')
 PARSER.add_argument('--speed', type=int, nargs='?', default=115200,
@@ -92,9 +106,9 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
             FILE_SIZE = int(FILE_SIZE)
             FILENAME = base64.b64decode(FILENAME_B64).decode('ascii')
             M.update(FILENAME_B64)
-            print("INFO: Receiving file %s" % FILENAME)
+            DIODE_LOGGER.info("Receiving file %s", FILENAME)
         elif (STARTED and LINE == chr(2)): # STX - Start of Text
-            print("INFO: Buffering content.")
+            DIODE_LOGGER.info("Buffering content.")
             send_status(1)
             CONTENT = b''
             N = 0
@@ -109,7 +123,7 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                     try:
                         LINE_DECODED = base64.b64decode(LINE)
                     except base64.binascii.Error:
-                        print("ERROR: Cannot decode Base64.")
+                        DIODE_LOGGER.error("Cannot decode Base64.")
                         reset(False)
                         break
                     CONTENT += LINE_DECODED
@@ -122,13 +136,13 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                 FILEPATH = os.path.join(ARGS.directory, FILENAME)
                 if os.path.dirname(FILEPATH) and not os.path.exists(os.path.dirname(FILEPATH)):
                     os.makedirs(os.path.dirname(FILEPATH))
-                print("INFO: Hashsums match, writing to %s" % FILEPATH)
+                DIODE_LOGGER.info("Hashsums match, writing to %s", FILEPATH)
                 F = open(FILEPATH, "wb")
                 F.write(CONTENT)
                 F.close()
                 reset(True)
             else:
-                print("ERROR: Hashsums do not match.")
+                DIODE_LOGGER.error("Hashsums do not match.")
                 reset(False)
             send_status(0)
         else:
