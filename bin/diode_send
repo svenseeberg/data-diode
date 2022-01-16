@@ -16,12 +16,13 @@ import serial
 
 DIODE_LOGGER = logging.getLogger('DIODE')
 DIODE_LOGGER.setLevel(logging.INFO)
-LOGGING_FORMATTER = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+SYSLOG_FORMATTER = logging.Formatter('%(name)s %(levelname)s: %(message)s')
+STDERR_FORMATTER = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
 SYSLOG_HANDLER = logging.handlers.SysLogHandler(address='/dev/log')
-SYSLOG_HANDLER.setFormatter(LOGGING_FORMATTER)
+SYSLOG_HANDLER.setFormatter(SYSLOG_FORMATTER)
 STDERR_HANDLER = logging.StreamHandler(sys.stderr)
 STDERR_HANDLER.setLevel(logging.DEBUG)
-STDERR_HANDLER.setFormatter(LOGGING_FORMATTER)
+STDERR_HANDLER.setFormatter(STDERR_FORMATTER)
 DIODE_LOGGER.addHandler(SYSLOG_HANDLER)
 DIODE_LOGGER.addHandler(STDERR_HANDLER)
 

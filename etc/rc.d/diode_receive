@@ -6,7 +6,7 @@ daemon_flags="--directory /var/www/diode --device /dev/cuaU0 --arduino /dev/cuaU
 . /etc/rc.d/rc.subr
 
 rc_start() {
-        ${rcexec} "${daemon} ${daemon_flags} 2>&1"
+        ${rcexec} "${daemon} ${daemon_flags} 2>&1 &"
 }
 
 rc_cmd $1
