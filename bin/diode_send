@@ -4,13 +4,26 @@ Send files through unidirectional serial device
 """
 
 import os
+import sys
 import base64
 import hashlib
 import time
 import argparse
+import logging
+import logging.handlers
 from subprocess import Popen, PIPE
-
 import serial
+
+DIODE_LOGGER = logging.getLogger('DIODE')
+DIODE_LOGGER.setLevel(logging.INFO)
+LOGGING_FORMATTER = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+SYSLOG_HANDLER = logging.handlers.SysLogHandler(address='/dev/log')
+SYSLOG_HANDLER.setFormatter(LOGGING_FORMATTER)
+STDERR_HANDLER = logging.StreamHandler(sys.stderr)
+STDERR_HANDLER.setLevel(logging.DEBUG)
+STDERR_HANDLER.setFormatter(LOGGING_FORMATTER)
+DIODE_LOGGER.addHandler(SYSLOG_HANDLER)
+DIODE_LOGGER.addHandler(STDERR_HANDLER)
 
 PARSER = argparse.ArgumentParser(description='Serial device options')
 PARSER.add_argument('--speed', type=int, nargs='?', default=115200,
@@ -35,7 +48,7 @@ def wln(line):
 
 
 with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
-    print("Scanning %s" % ARGS.directory)
+    DIODE_LOGGER.info("Scanning %s", ARGS.directory)
     wln(b'sync ...')
     time.sleep(0.1)
     wln(b'Hello world!')
@@ -46,10 +59,10 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                 p = Popen(['fuser', filepath], stdout=PIPE)
                 output, err = p.communicate()
                 if output == filepath + ":":
-                    print("ERROR: Skipping %s, in use." % filename)
+                    DIODE_LOGGER.error("Skipping %s, in use.", filename)
                     continue
                 filename = os.path.relpath(filepath, ARGS.directory)
-                print("INFO: Sending %s" % filename)
+                DIODE_LOGGER.info("Sending %s", filename)
                 m = hashlib.md5()
                 filesize = " " + str(os.stat(filepath).st_size)
                 filename = base64.b64encode(bytes(filename, 'ascii'))
@@ -71,6 +84,6 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                 wln(hashsum)
                 wln(bytes(chr(4), 'ascii')) # EOT - End of Transmission
                 os.remove(filepath)
-                print("INFO: Done.")
+                DIODE_LOGGER.info("Done.")
                 time.sleep(5)
         time.sleep(1)
