@@ -130,7 +130,7 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                     try:
                         LINE_DECODED = base64.b64decode(LINE)
                     except base64.binascii.Error:
-                        DIODE_LOGGER.error("Cannot decode Base64.")
+                        DIODE_LOGGER.error("Cannot decode Base64, aborting %s", FILENAME)
                         reset(False)
                         break
                     CONTENT += LINE_DECODED
@@ -149,7 +149,7 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                 F.close()
                 reset(True)
             else:
-                DIODE_LOGGER.error("Hashsums do not match.")
+                DIODE_LOGGER.error("Hashsums do not match, failed to transfer %s", FILEPATH)
                 reset(False)
             send_status(0)
         elif LINE == chr(25):
