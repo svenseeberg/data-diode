@@ -9,6 +9,7 @@ import base64
 import hashlib
 import time
 import argparse
+import re
 import logging
 import logging.handlers
 from subprocess import Popen, PIPE
@@ -37,7 +38,8 @@ PARSER.add_argument('--bs', type=int, nargs='?', default=16384,
                     help='size of file chunks sent through the serial connection')
 PARSER.add_argument('--sleep', type=float, nargs='?', default=0,
                     help='wait between each chunks, default 0')
-
+PARSER.add_argument('--csize', type=int, nargs='?', default=4,
+                    help='chunk size in MB, default 4')
 ARGS = PARSER.parse_args()
 
 def wln(line):
@@ -62,14 +64,21 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                 if output == filepath + ":":
                     DIODE_LOGGER.error("Skipping %s, in use.", filename)
                     continue
-                filename = os.path.relpath(filepath, ARGS.directory)
-                DIODE_LOGGER.info("Sending %s", filename)
+                filesize = os.stat(filepath).st_size
+                if filesize > (ARGS.csize * 1024 * 1024):
+                    DIODE_LOGGER.info("File %s too large, splitting into chunks", filename)
+                    p = Popen(["/usr/bin/split", "-b", "{}m".format(ARGS.csize), filepath,
+                               "{}-part_".format(filename)], cwd=root)
+                    p.communicate()
+                    os.remove(filepath)
+                    continue
+                rel_filename = os.path.relpath(filepath, ARGS.directory)
+                DIODE_LOGGER.info("Sending %s", rel_filename)
                 m = hashlib.md5()
-                filesize = " " + str(os.stat(filepath).st_size)
-                filename = base64.b64encode(bytes(filename, 'ascii'))
-                m.update(filename)
+                b64_filename = base64.b64encode(bytes(rel_filename, 'ascii'))
+                m.update(b64_filename)
                 wln(bytes(chr(1), 'ascii')) # SOH - Start Of Header
-                wln(filename+bytes(filesize, 'ascii'))
+                wln(b64_filename+bytes(" " + str(filesize), 'ascii'))
                 wln(bytes(chr(2), 'ascii')) # STX - Start of Text
                 with open(filepath, "rb") as fo:
                     while True:
@@ -85,6 +94,15 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                 wln(hashsum)
                 wln(bytes(chr(4), 'ascii')) # EOT - End of Transmission
                 os.remove(filepath)
+                if re.match("(.*)-part_[a-z]{2}", filename):
+                    basename = re.search("(.*)-part_[a-z]{2}", filename).group(1)
+                    chunks_list = sorted([i for i in files if re.match(
+                        basename + "-part_[a-z]{2}", i)])
+                    if chunks_list[-1] == filename:
+                        DIODE_LOGGER.info("Last chunk for %s transferred.", filename)
+                        wln(bytes(chr(25), 'ascii')) # EM - End of Medium
+                        time.sleep(2)
+                        # extra time for the receiver to start assembling chunks
                 DIODE_LOGGER.info("Done.")
                 time.sleep(5)
         time.sleep(1)
