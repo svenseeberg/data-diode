@@ -11,8 +11,10 @@ import base64
 import hashlib
 import argparse
 import time
+import re
 import logging
 import logging.handlers
+from subprocess import Popen
 import serial
 
 DIODE_LOGGER = logging.getLogger('DIODE')
@@ -43,6 +45,8 @@ FILES_TOTAL = 0
 FILES_ERROR = 0
 FILE_SIZE = 0
 TRANSFERRED_DATA = 0
+FILENAME = None
+LAST_FILENAME = None
 
 ARDUINO = serial.Serial(ARGS.arduino, 38400, timeout=1)
 
@@ -70,6 +74,8 @@ def reset(success):
     global CONTENT
     CONTENT = None
     global FILENAME
+    global LAST_FILENAME
+    LAST_FILENAME = FILENAME
     FILENAME = None
     global FILENAME_B64
     FILENAME_B64 = None
@@ -146,6 +152,12 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                 DIODE_LOGGER.error("Hashsums do not match.")
                 reset(False)
             send_status(0)
+        elif LINE == chr(25):
+            CHUNKS_GLOBBER = re.search("(.*-part_)[a-z]{2}", LAST_FILENAME).group(1)
+            ORIG_NAME = re.search("(.*)-part_[a-z]{2}", LAST_FILENAME).group(1)
+            DIODE_LOGGER.info("Assembling previously transmitted cunks to %s", ORIG_NAME)
+            CMD = "/bin/cat {}* > {}".format(CHUNKS_GLOBBER, ORIG_NAME)
+            Popen(CMD, shell=True, executable='/bin/ksh', cwd=ARGS.directory)
         else:
             send_status(0)
             time.sleep(0.1)
