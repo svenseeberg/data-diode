@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""
+Download OpenBSD packages including dependencies
+"""
+
+import os
+import re
+import tarfile
+import urllib.request
+import configparser
+import argparse
+from pathlib import Path
+
+
+PARSER = argparse.ArgumentParser(description='Mirror OpenBSD packages with dependencies')
+PARSER.add_argument('--directory', type=str, nargs='?', required=False, default="./",
+                    help='directory from which to send files')
+
+
+def download_package(arch, version, package_filename, stable):
+    """
+    Download package and store in file
+    """
+    if stable:
+        stable = "-stable"
+    else:
+        stable = ""
+    url = "https://cdn.openbsd.org/pub/OpenBSD/{}/packages{}/{}/{}".format(
+        version, stable, arch, package_filename)
+    print("Downloading " + url)
+    target_path = os.path.join(ARGS.directory, package_filename)
+    urllib.request.urlretrieve(url, filename=target_path)
+    return get_pkg_dependencies(target_path)
+
+def get_pkg_dependencies(pkg_file):
+    """
+    Get "@depends" lines from +CONTENTS file of pkg archive
+    """
+    pkg_file = tarfile.open(pkg_file, 'r:gz')
+    info_file = pkg_file.extractfile("+CONTENTS")
+    deps = [line for line in info_file.read().decode("utf-8").split("\n") if "@depend" in line]
+    info_file.close()
+    result = []
+    for dep in deps:
+        pkg = dep.split(':')[1].replace("-*", "")
+        version = dep.split(':')[2].replace("{}-".format(pkg), "")
+        result.append((pkg, version))
+    return result
+
+def read_config(path="{}/.openbsd-mirror.ini".format(str(Path.home()))):
+    """
+    Read ini config file. Sections define architectures.
+    Config keys are package names, the values downloaded version numbers.
+    """
+    config = configparser.ConfigParser()
+    config.read(path)
+    return config
+
+def write_config(config, path="{}/.openbsd-mirror.ini".format(str(Path.home()))):
+    """
+    Write with updated version strings
+    """
+    with open(path, 'w') as configfile:
+        config.write(configfile)
+
+def get_pkg_list(arch, version, stable=False):
+    """
+    Get list of packages and filter package names
+    """
+    if stable:
+        stable = "-stable"
+    else:
+        stable = ""
+    url = "https://cdn.openbsd.org/pub/OpenBSD/{}/packages{}/{}/".format(version, stable, arch)
+    req = urllib.request.urlopen(url).read().decode('utf-8')
+    lines = req.split("\n")
+    pkgs = []
+    for line in lines:
+        search = re.search(r"<a href=\"(.*\.tgz)\".*", line)
+        if search:
+            pkgs.append(search.group(1))
+    return pkgs
+
+# pylint: disable=too-many-arguments
+def recursive_download(avl_pkgs, avl_pkgs_stbl, os_version, arch, pkg):
+    """
+    Download a package, get dependencies and recursively download
+    """
+    stable, pkg_filename = get_pkg_download_path(avl_pkgs, avl_pkgs_stbl, pkg)
+    cur_pkg_version = get_pkg_version(pkg, pkg_filename)
+    old_pkg_version = get_existing_version(arch, pkg)
+    if cur_pkg_version > old_pkg_version:
+        dependencies = download_package(arch, os_version, pkg_filename, stable)
+        for dep in dependencies:
+            dep_version = recursive_download(avl_pkgs, avl_pkgs_stbl, os_version, arch, dep[0])
+            CONFIG.set("{}/dependencies".format(arch), dep[0], dep_version)
+    return cur_pkg_version
+
+def get_existing_version(arch, pkg):
+    """
+    Get previously downloaded version of package
+    """
+    dep_section = "{}/dependencies".format(arch)
+    return CONFIG.get(arch, pkg, fallback=CONFIG.get(dep_section, pkg, fallback=None))
+
+def get_pkg_version(package, pkg_filename):
+    """
+    Extract version from filename
+    """
+    return re.search(r"({}-)([0-9\.pv\-]*)(\.tgz)$".format(package), pkg_filename).group(2)
+
+def get_pkg_download_path(avl_pkgs, avl_pkgs_stbl, package):
+    """
+    Find full package name including version
+    """
+    for stbl_pkg in avl_pkgs_stbl:
+        if re.match(r"{}[0-9\.pv\-]*\.tgz$".format(package), stbl_pkg):
+            return True, stbl_pkg
+    for stbl_pkg in avl_pkgs:
+        if re.match(r"{}[0-9\.pv\-]*\.tgz$".format(package), stbl_pkg):
+            return False, stbl_pkg
+    return None, None
+
+def main():
+    """
+    Main function
+    """
+    os_version = CONFIG['OpenBSD']["version"]
+    for arch in [s for s in CONFIG.sections() if s != "OpenBSD" and "/dependencies" not in s]:
+        dep_sec = "{}/dependencies".format(arch)
+        if dep_sec not in CONFIG.sections():
+            CONFIG.add_section("{}/dependencies".format(arch))
+        avl_pkgs = get_pkg_list(arch, os_version, stable=False)
+        avl_pkgs_stbl = get_pkg_list(arch, os_version, stable=True)
+        # Get new packages including dependencies
+        for package in CONFIG[arch]:
+            pkg_version = recursive_download(avl_pkgs, avl_pkgs_stbl, os_version, arch, package)
+            CONFIG.set(arch, package, pkg_version)
+        # Update all stored dependencies
+        for package in CONFIG[dep_sec]:
+            pkg_version = recursive_download(avl_pkgs, avl_pkgs_stbl, os_version, arch, package)
+            CONFIG.set(dep_sec, package, pkg_version)
+
+ARGS = PARSER.parse_args()
+CONFIG = read_config()
+if __name__ == '__main__':
+    main()
+write_config(CONFIG)
