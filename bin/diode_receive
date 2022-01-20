@@ -40,65 +40,6 @@ PARSER.add_argument('--directory', type=str, nargs='?', required=True,
                     help='directory from which to send files')
 
 ARGS = PARSER.parse_args()
-TOTAL_DATA = 0
-FILES_TOTAL = 0
-FILES_ERROR = 0
-FILE_SIZE = 0
-TRANSFERRED_DATA = 0
-FILENAME = None
-LAST_FILENAME = None
-
-ARDUINO = serial.Serial(ARGS.arduino, 38400, timeout=1)
-
-def send_status(state_id):
-    """
-    Send info to Arduino to update LCD
-    """
-    if ARGS.arduino:
-        if state_id == 1:
-            state = "Rx   "
-            progress = int((TRANSFERRED_DATA / FILE_SIZE)*100)
-        else:
-            state = "Wait "
-        data_kb = int(TOTAL_DATA/1024)
-        line1 = (state + str(FILES_TOTAL)+"F " + str(FILES_ERROR)+"E")
-        line2 = (str(data_kb) + "KB" + (" " + str(progress) + "%" if
-                                        state_id == 1 else ""))
-        ARDUINO.write(bytes(line1+'\n', 'ascii'))
-        ARDUINO.write(bytes(line2+'\n', 'ascii'))
-
-def reset(success):
-    """
-    reset status variables
-    """
-    global CONTENT
-    CONTENT = None
-    global FILENAME
-    global LAST_FILENAME
-    LAST_FILENAME = FILENAME
-    FILENAME = None
-    global FILENAME_B64
-    FILENAME_B64 = None
-    global HASHSUM
-    HASHSUM = None
-    global HASHSUM_RECEIVED
-    HASHSUM_RECEIVED = None
-    global M
-    M = hashlib.md5()
-    global STARTED
-    STARTED = False
-    global FILE_SIZE
-    FILE_SIZE = 0
-    global TRANSFERRED_DATA
-    TRANSFERRED_DATA = 0
-    global FILES_TOTAL
-    FILES_TOTAL = FILES_TOTAL + 1
-    if not success:
-        global FILES_ERROR
-        FILES_ERROR = FILES_ERROR + 1
-    global ARDUINO
-    ARDUINO.write(bytes('               \n', 'ascii'))
-    ARDUINO.write(bytes('               \n', 'ascii'))
 
 def assemble_chunks(args, filename):
     """
@@ -110,60 +51,146 @@ def assemble_chunks(args, filename):
     cmd = "/bin/cat {}* > {}".format(chunks_globber, orig_name)
     Popen(cmd, shell=True, executable='/bin/ksh', cwd=args.directory)
 
-with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
-    M = hashlib.md5()
-    STARTED = False
-    time.sleep(3)
-    send_status(0)
-    while True:
-        LINE = ser.readline().strip().decode('ascii')
-        if LINE == chr(1): # SOH - Start Of Header
-            STARTED = True
-            FILENAME_B64, FILE_SIZE = ser.readline().strip().split(b" ")
-            FILE_SIZE = int(FILE_SIZE)
-            FILENAME = base64.b64decode(FILENAME_B64).decode('ascii')
-            M.update(FILENAME_B64)
-            DIODE_LOGGER.info("Receiving file %s", FILENAME)
-        elif (STARTED and LINE == chr(2)): # STX - Start of Text
-            DIODE_LOGGER.info("Buffering content.")
-            send_status(1)
-            CONTENT = b''
-            N = 0
-            while True:
-                LINE = ser.readline().strip()
-                if LINE == bytes(chr(3), 'ascii'): # ETX - End of Text:
-                    HASHSUM = ser.readline().strip()
-                    break
-                else:
-                    N = N + 1
-                    M.update(LINE)
-                    try:
-                        LINE_DECODED = base64.b64decode(LINE)
-                    except base64.binascii.Error:
-                        DIODE_LOGGER.error("Cannot decode Base64, aborting %s", FILENAME)
-                        reset(False)
-                        break
-                    CONTENT += LINE_DECODED
-                    TRANSFERRED_DATA = TRANSFERRED_DATA + len(LINE_DECODED)
-                    TOTAL_DATA = TOTAL_DATA + len(LINE_DECODED)
-                    send_status(1)
-        elif(STARTED and LINE == chr(4)): # EOT - End of Transmission
-            HASHSUM_RECEIVED = M.hexdigest().encode("ascii", "ignore")
-            if HASHSUM_RECEIVED == HASHSUM:
-                FILEPATH = os.path.join(ARGS.directory, FILENAME)
-                if os.path.dirname(FILEPATH) and not os.path.exists(os.path.dirname(FILEPATH)):
-                    os.makedirs(os.path.dirname(FILEPATH))
-                DIODE_LOGGER.info("Hashsums match, writing to %s", FILEPATH)
-                F = open(FILEPATH, "wb")
-                F.write(CONTENT)
-                F.close()
-                reset(True)
+
+class FileTransfer:  # pylint: disable=too-few-public-methods
+    """
+    Class to handle data of a file transfer
+    """
+
+    def __init__(self):
+        self.size = 0
+        self.name = None
+        self.name_b64 = None
+        self.hashsum = None
+        self.hashsum_received = None
+        self.content = None
+        self.hasher = hashlib.md5()
+
+class DiodeHandler:  # pylint: disable=too-many-instance-attributes
+    """
+    Class for transferring data and keeping track of the status
+    """
+    def __init__(self, args, logger):
+        self.args = args
+        self.logger = logger
+        self.total_data = 0
+        self.files_total = 0
+        self.files_error = 0
+        self.transferred_data = 0
+        self.last_filename = None
+        self.started = False
+        self.arduino = serial.Serial(args.arduino, 38400, timeout=1)
+
+    def send_status(self, state_id, transferred_file):
+        """
+        Send info to Arduino to update LCD
+        """
+        if self.args.arduino:
+            if state_id == 1:
+                state = "Rx   "
+                progress = int((self.transferred_data / transferred_file.size)*100)
             else:
-                DIODE_LOGGER.error("Hashsums do not match, failed to transfer %s", FILEPATH)
-                reset(False)
-            send_status(0)
-        elif LINE == chr(25):
-            assemble_chunks(ARGS, LAST_FILENAME)
+                state = "Wait "
+            data_kb = int(self.total_data/1024)
+            line1 = (state + str(self.files_total)+"F " + str(self.files_error)+"E")
+            line2 = (str(data_kb) + "KB" + (" " + str(progress) + "%" if
+                                            state_id == 1 else ""))
+            self.arduino.write(bytes(line1+'\n', 'ascii'))
+            self.arduino.write(bytes(line2+'\n', 'ascii'))
+
+    def reset(self, success):
+        """
+        reset status variables
+        """
+        self.started = False
+        self.transferred_data = 0
+        self.files_total = self.files_total + 1
+        if not success:
+            self.files_error = self.files_error + 1
+        self.arduino.write(bytes('               \n', 'ascii'))
+        self.arduino.write(bytes('               \n', 'ascii'))
+
+    def start_transmission(self, ser):
+        """
+        Start a transmission of a file
+        """
+        self.started = True
+        transferred_file = FileTransfer()
+        transferred_file.name_b64, filesize = ser.readline().strip().split(b" ")
+        transferred_file.size = int(filesize)
+        transferred_file.name = base64.b64decode(transferred_file.name_b64).decode('ascii')
+        transferred_file.hasher.update(transferred_file.name_b64)
+        self.logger.info("Receiving file %s", transferred_file.name)
+        return transferred_file
+
+    def end_transmission(self, transferred_file):
+        """
+        Transmission has ended, write file to disk
+        """
+        transferred_file.hashsum_received = (transferred_file.hasher.hexdigest()
+                                             .encode("ascii", "ignore"))
+        if transferred_file.hashsum_received == transferred_file.hashsum:
+            filepath = os.path.join(self.args.directory, transferred_file.name)
+            if os.path.dirname(filepath) and not os.path.exists(
+                    os.path.dirname(filepath)):
+                os.makedirs(os.path.dirname(filepath))
+            self.logger.info("Hashsums match, writing to %s", filepath)
+            resultfile = open(filepath, "wb")
+            resultfile.write(transferred_file.content)
+            resultfile.close()
+            self.reset(True)
         else:
-            send_status(0)
-            time.sleep(0.1)
+            self.logger.error("Hashsums do not match, failed to transfer %s", filepath)
+            self.reset(False)
+        self.send_status(0, transferred_file)
+
+    def buffer_content(self, ser, transferred_file):
+        """
+        Receive content of file
+        """
+        self.logger.info("Buffering content.")
+        self.send_status(1, transferred_file)
+        transferred_file.content = b''
+        while True:
+            line = ser.readline().strip()
+            if line == bytes(chr(3), 'ascii'): # ETX - End of Text:
+                transferred_file.hashsum = ser.readline().strip()
+                break
+            else:
+                transferred_file.hasher.update(line)
+                try:
+                    line_decoded = base64.b64decode(line)
+                except base64.binascii.Error:
+                    self.logger.error("Cannot decode Base64, aborting %s", transferred_file.name)
+                    self.reset(False)
+                    break
+                transferred_file.content += line_decoded
+                self.transferred_data = self.transferred_data + len(line_decoded)
+                self.total_data = self.total_data + len(line_decoded)
+                self.send_status(1, transferred_file)
+
+    def transfer(self):
+        """
+        receive data
+        """
+        with serial.Serial(self.args.device, self.args.speed, timeout=1) as ser:
+            time.sleep(3)
+            transferred_file = None
+            self.send_status(0, transferred_file)
+            while True:
+                line = ser.readline().strip().decode('ascii')
+                if line == chr(1): # SOH - Start Of Header
+                    transferred_file = self.start_transmission(ser)
+                elif (self.started and line == chr(2)): # STX - Start of Text
+                    self.buffer_content(ser, transferred_file)
+                elif(self.started and line == chr(4)): # EOT - End of Transmission
+                    self.end_transmission(transferred_file)
+                    transferred_file = None
+                elif line == chr(25):
+                    assemble_chunks(self.args, self.last_filename)
+                else:
+                    self.send_status(0, transferred_file)
+                    time.sleep(0.1)
+
+DIODE = DiodeHandler(ARGS, DIODE_LOGGER)
+DIODE.transfer()
