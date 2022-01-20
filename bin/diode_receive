@@ -100,6 +100,16 @@ def reset(success):
     ARDUINO.write(bytes('               \n', 'ascii'))
     ARDUINO.write(bytes('               \n', 'ascii'))
 
+def assemble_chunks(args, filename):
+    """
+    Recreate original file from parts
+    """
+    chunks_globber = re.search("(.*-part_)[a-z]{2}", filename).group(1)
+    orig_name = re.search("(.*)-part_[a-z]{2}", filename).group(1)
+    DIODE_LOGGER.info("Assembling previously transmitted cunks to %s", orig_name)
+    cmd = "/bin/cat {}* > {}".format(chunks_globber, orig_name)
+    Popen(cmd, shell=True, executable='/bin/ksh', cwd=args.directory)
+
 with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
     M = hashlib.md5()
     STARTED = False
@@ -153,11 +163,7 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                 reset(False)
             send_status(0)
         elif LINE == chr(25):
-            CHUNKS_GLOBBER = re.search("(.*-part_)[a-z]{2}", LAST_FILENAME).group(1)
-            ORIG_NAME = re.search("(.*)-part_[a-z]{2}", LAST_FILENAME).group(1)
-            DIODE_LOGGER.info("Assembling previously transmitted cunks to %s", ORIG_NAME)
-            CMD = "/bin/cat {}* > {}".format(CHUNKS_GLOBBER, ORIG_NAME)
-            Popen(CMD, shell=True, executable='/bin/ksh', cwd=ARGS.directory)
+            assemble_chunks(ARGS, LAST_FILENAME)
         else:
             send_status(0)
             time.sleep(0.1)
