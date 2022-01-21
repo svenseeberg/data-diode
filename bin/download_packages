@@ -15,6 +15,9 @@ from pathlib import Path
 PARSER = argparse.ArgumentParser(description='Mirror OpenBSD packages with dependencies')
 PARSER.add_argument('--directory', type=str, nargs='?', required=False, default="./",
                     help='directory from which to send files')
+PARSER.add_argument('--config', type=str, nargs='?', required=False,
+                    default="{}/.openbsd-mirror.ini".format(str(Path.home())),
+                    help='Path to configuration file')
 
 
 def download_package(arch, version, package_filename, stable):
@@ -47,20 +50,20 @@ def get_pkg_dependencies(pkg_file):
         result.append((pkg, version))
     return result
 
-def read_config(path="{}/.openbsd-mirror.ini".format(str(Path.home()))):
+def read_config():
     """
     Read ini config file. Sections define architectures.
     Config keys are package names, the values downloaded version numbers.
     """
     config = configparser.ConfigParser()
-    config.read(path)
+    config.read(ARGS.config)
     return config
 
-def write_config(config, path="{}/.openbsd-mirror.ini".format(str(Path.home()))):
+def write_config(config):
     """
     Write with updated version strings
     """
-    with open(path, 'w') as configfile:
+    with open(ARGS.config, 'w') as configfile:
         config.write(configfile)
 
 def get_pkg_list(arch, version, stable=False):
