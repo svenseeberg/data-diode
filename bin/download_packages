@@ -12,7 +12,8 @@ import argparse
 from pathlib import Path
 
 
-PARSER = argparse.ArgumentParser(description='Mirror OpenBSD packages with dependencies')
+PARSER = argparse.ArgumentParser(description='Mirror OpenBSD packages with dependencies. ' +
+                                 'This script keeps track of already downloaded packages.')
 PARSER.add_argument('--directory', type=str, nargs='?', required=False, default="./",
                     help='directory from which to send files')
 PARSER.add_argument('--config', type=str, nargs='?', required=False,
@@ -25,13 +26,14 @@ def download_package(arch, version, package_filename, stable):
     Download package and store in file
     """
     if stable:
-        stable = "-stable"
+        packages = "packages-stable"
     else:
-        stable = ""
-    url = "https://cdn.openbsd.org/pub/OpenBSD/{}/packages{}/{}/{}".format(
-        version, stable, arch, package_filename)
+        packages = "packages"
+    url = "https://cdn.openbsd.org/pub/OpenBSD/{}/{}/{}/{}".format(
+        version, packages, arch, package_filename)
     print("Downloading " + url)
-    target_path = os.path.join(ARGS.directory, package_filename)
+    target_path = os.path.join(ARGS.directory, "pub/OpenBSD/", version, packages,
+                               arch, package_filename)
     urllib.request.urlretrieve(url, filename=target_path)
     return get_pkg_dependencies(target_path)
 
@@ -45,8 +47,9 @@ def get_pkg_dependencies(pkg_file):
     info_file.close()
     result = []
     for dep in deps:
-        pkg = dep.split(':')[1].replace("-*", "")
-        version = dep.split(':')[2].replace("{}-".format(pkg), "")
+        search = re.search(r"(.*)-([0-9\.]*)", dep.split(':')[2])
+        pkg = search.group(1)
+        version = search.group(2)
         result.append((pkg, version))
     return result
 
@@ -85,17 +88,20 @@ def get_pkg_list(arch, version, stable=False):
     return pkgs
 
 # pylint: disable=too-many-arguments
-def recursive_download(avl_pkgs, avl_pkgs_stbl, os_version, arch, pkg):
+def recursive_download(avl_pkgs, avl_pkgs_stbl, os_version, arch, pkg, cur_pkg_version=None):
     """
     Download a package, get dependencies and recursively download
     """
-    stable, pkg_filename = get_pkg_download_path(avl_pkgs, avl_pkgs_stbl, pkg)
-    cur_pkg_version = get_pkg_version(pkg, pkg_filename)
+    stable, pkg_filename = get_pkg_download_path(avl_pkgs, avl_pkgs_stbl, pkg,
+                                                 cur_pkg_version)
+    if cur_pkg_version is None:
+        cur_pkg_version = get_pkg_version(pkg, pkg_filename)
     old_pkg_version = get_existing_version(arch, pkg)
-    if cur_pkg_version > old_pkg_version:
+    if old_pkg_version is None or cur_pkg_version > old_pkg_version:
         dependencies = download_package(arch, os_version, pkg_filename, stable)
         for dep in dependencies:
-            dep_version = recursive_download(avl_pkgs, avl_pkgs_stbl, os_version, arch, dep[0])
+            dep_version = recursive_download(avl_pkgs, avl_pkgs_stbl, os_version, arch,
+                                             dep[0], dep[1])
             CONFIG.set("{}/dependencies".format(arch), dep[0], dep_version)
     return cur_pkg_version
 
@@ -112,10 +118,12 @@ def get_pkg_version(package, pkg_filename):
     """
     return re.search(r"({}-)([0-9\.pv\-]*)(\.tgz)$".format(package), pkg_filename).group(2)
 
-def get_pkg_download_path(avl_pkgs, avl_pkgs_stbl, package):
+def get_pkg_download_path(avl_pkgs, avl_pkgs_stbl, package, version=None):
     """
     Find full package name including version
     """
+    if version is not None:
+        package = "-".join([package, version])
     for stbl_pkg in avl_pkgs_stbl:
         if re.match(r"{}[0-9\.pv\-]*\.tgz$".format(package), stbl_pkg):
             return True, stbl_pkg
@@ -141,7 +149,9 @@ def main():
             CONFIG.set(arch, package, pkg_version)
         # Update all stored dependencies
         for package in CONFIG[dep_sec]:
-            pkg_version = recursive_download(avl_pkgs, avl_pkgs_stbl, os_version, arch, package)
+            version = CONFIG.get(dep_sec, package)
+            pkg_version = recursive_download(avl_pkgs, avl_pkgs_stbl, os_version,
+                                             arch, package, version)
             CONFIG.set(dep_sec, package, pkg_version)
 
 ARGS = PARSER.parse_args()
