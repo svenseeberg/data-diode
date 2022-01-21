@@ -33,6 +33,10 @@ the total number of files transferred, the number of errors that
 occured, the total amount of transferred KB, and the progress
 (percentage) of the current file transfer.
 
+This project also includes a program to download OpenBSD packages with
+their dependencies for transferral through the diode. They can then be
+served from a webserver in the internal network.
+
 ## Speed
 The speed of the diode is mostly limited by the UART devices. With cheap
 USB UART adapters, a data rate of about 20KB/s can be achieved. This is
