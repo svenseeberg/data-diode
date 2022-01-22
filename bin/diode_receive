@@ -47,7 +47,7 @@ def assemble_chunks(args, filename):
     """
     chunks_globber = re.search("(.*-part_)[a-z]{2}", filename).group(1)
     orig_name = re.search("(.*)-part_[a-z]{2}", filename).group(1)
-    DIODE_LOGGER.info("Assembling previously transmitted cunks to %s", orig_name)
+    DIODE_LOGGER.info("Assembling previously transmitted chunks to %s", orig_name)
     cmd = "/bin/cat {}* > {}".format(chunks_globber, orig_name)
     Popen(cmd, shell=True, executable='/bin/ksh', cwd=args.directory)
 

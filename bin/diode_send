@@ -94,8 +94,9 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                 wln(hashsum)
                 wln(bytes(chr(4), 'ascii')) # EOT - End of Transmission
                 os.remove(filepath)
-                if re.match("(.*)-part_[a-z]{2}", filename):
-                    basename = re.search("(.*)-part_[a-z]{2}", filename).group(1)
+                search = re.search("(.*)-part_[a-z]{2}", filename)
+                if search:
+                    basename = search.group(1)
                     chunks_list = sorted([i for i in files if re.match(
                         basename + "-part_[a-z]{2}", i)])
                     if chunks_list and chunks_list[-1] == filename:
