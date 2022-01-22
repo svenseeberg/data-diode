@@ -98,7 +98,7 @@ with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
                     basename = re.search("(.*)-part_[a-z]{2}", filename).group(1)
                     chunks_list = sorted([i for i in files if re.match(
                         basename + "-part_[a-z]{2}", i)])
-                    if chunks_list[-1] == filename:
+                    if chunks_list and chunks_list[-1] == filename:
                         DIODE_LOGGER.info("Last chunk for %s transferred.", filename)
                         wln(bytes(chr(25), 'ascii')) # EM - End of Medium
                         time.sleep(2)
