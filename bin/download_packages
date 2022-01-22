@@ -117,7 +117,7 @@ def get_pkg_version(package, pkg_filename):
     """
     Extract version from filename
     """
-    return re.search(r"({}-)([0-9\.pv\-]*)(\.tgz)$".format(package), pkg_filename).group(2)
+    return re.search(r"({}-)([0-9\.plv\-]*)(\.tgz)$".format(package), pkg_filename).group(2)
 
 def get_pkg_download_path(avl_pkgs, avl_pkgs_stbl, package, version=None):
     """
@@ -127,10 +127,10 @@ def get_pkg_download_path(avl_pkgs, avl_pkgs_stbl, package, version=None):
         package = "-".join([package, version])
     package = package.replace("+", r"\+")
     for stbl_pkg in avl_pkgs_stbl:
-        if re.match(r"{}[0-9\.pv\-]*\.tgz$".format(package), stbl_pkg):
+        if re.match(r"{}[0-9\.plv\-]*\.tgz$".format(package), stbl_pkg):
             return True, stbl_pkg
     for stbl_pkg in avl_pkgs:
-        if re.match(r"{}[0-9\.pv\-]*\.tgz$".format(package), stbl_pkg):
+        if re.match(r"{}[0-9\.plv\-]*\.tgz$".format(package), stbl_pkg):
             return False, stbl_pkg
     return None, None
 
