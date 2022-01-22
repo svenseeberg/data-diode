@@ -143,6 +143,7 @@ class DiodeHandler:  # pylint: disable=too-many-instance-attributes
             self.logger.error("Hashsums do not match, failed to transfer %s", filepath)
             self.reset(False)
         self.send_status(0, transferred_file)
+        self.last_filename = transferred_file.name
 
     def buffer_content(self, ser, transferred_file):
         """
