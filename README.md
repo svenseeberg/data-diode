@@ -1,6 +1,6 @@
 ## About
 This project contains the source code for a DIY data diode. It uses
-Raspberry Pis to unidirectionally transmit data via the serial
+Raspberry Pis to unidirectionally transmit files via the serial
 interface from one to the other. As the reverse direction pins are
 not connected, no transfer in the other direction is possible. An
 Arduino can be used to monitor the traffic and show the status on
@@ -11,8 +11,10 @@ a 1602 LCD.
 The software is primarily developed for OpenBSD but will also work
 on Raspbian or Debian. OpenBSD seems better suited as it is easier
 to maintain a mirror repository of the core operating system and
-selected packages. A simple script to download the required files
-and copy them through the diode is included.
+selected packages. This project therefore includes a program to
+download OpenBSD packages with their dependencies for transferral
+through the diode. They can then be served from a webserver in the
+internal network.
 
 I recommend to also look into 
 [wavestone-cdt/dyode](https://github.com/wavestone-cdt/dyode),
@@ -33,10 +35,6 @@ the total number of files transferred, the number of errors that
 occured, the total amount of transferred KB, and the progress
 (percentage) of the current file transfer.
 
-This project also includes a program to download OpenBSD packages with
-their dependencies for transferral through the diode. They can then be
-served from a webserver in the internal network.
-
 ## Speed
 The speed of the diode is mostly limited by the UART devices. With cheap
 USB UART adapters, a data rate of about 20KB/s can be achieved. This is
@@ -45,18 +43,20 @@ packages up to date in an internal network.
 
 ## Security
 There are some serious limitations to the concept of the diode and the
-mystical air gap when using Raspberry Pis (and probably (m)any other
-devices). Therefore, the security mainly hinges on the integrity of the
-operating system on the receiving Pi. The main advantage in this setup
-is that there is no default bidrectional communication. And the
-interactive use of the receiving Pi is very limited (receiving files via
-serial communication and writing them to the file system & updating the
-operating system frequently). This should make it a little more
-difficult for an attacker to gain control of the device. However, if the
-receiving device is compromized, there are probably lots of channels for
-bidrectional communication. I can think of a few examples, which could
-potentially be used. And I'm not even taking computers/devices into
-account that are connected to the receiving Pi in the internal network.
+mystical [air gap](https://cyber.bgu.ac.il/air-gap/) when using
+Raspberry Pis (and probably (m)any other devices). Therefore, the
+security mainly hinges on the integrity of the operating system on the
+receiving Pi. The main advantage in this setup is that there is no
+default bidrectional communication. And the interactive use of the
+receiving Pi is very limited (receiving files via serial communication
+and writing them to the file system & updating the operating system
+frequently). This should make it a little more difficult for an attacker
+to gain control of the device. However, if the receiving device is
+compromized, there are probably lots of channels for bidrectional
+communication. I can think of a few examples, which could potentially be
+used. And I'm not even taking computers/devices into account that are
+connected to the receiving Pi in the internal network.
+
 * The power management integrated circuit (MxL7704) has a I2C connection
 to the SoC. Therefore an attacker might be able to use this device and
 monitor the supply voltage, which could potentially be manipulated by
@@ -65,9 +65,10 @@ supply.
 * Even if the WLAN and bluetooth antenna is disconnected, a stub
 antenna still remains. I would not be surprised if it is possible to use
 this for short range communication.
-* There are many projects that use the GPIO clock pins for transmitting radio
-signals, usually with an attached antenna. And at least the audio jack
-is basically an AD converter.
+* There are many projects that use the GPIO clock pins for transmitting
+radio signals, usually with an attached antenna. And at least the audio
+jack is basically an AD converter.
+
 ## Installation instructions
 For details about the installation, read [INSTALL.md](INSTALL.md).
 
