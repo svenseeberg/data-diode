@@ -5,7 +5,7 @@ daemon_flags="--directory /var/www/diode --device /dev/cuaU0 --arduino /dev/cuaU
 
 . /etc/rc.d/rc.subr
 
-pexp="python3 \/usr\/local\/bin\/diode_receive(.*)
+pexp="python3 \/usr\/local\/bin\/diode_receive(.*)"
 
 rc_start() {
         ${rcexec} "${daemon} ${daemon_flags} 2>&1 &"
