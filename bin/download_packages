@@ -21,19 +21,30 @@ PARSER.add_argument('--config', type=str, nargs='?', required=False,
                     help='Path to configuration file')
 
 
-def download_package(arch, version, package_filename, stable):
+def package_path(stable, os_version, arch, package_filename):
+    """
+    Build path to package file in local file system
+    """
+
+    return os.path.join(ARGS.directory, "pub/OpenBSD/", os_version, packages_dir(stable),
+                        arch, package_filename)
+
+def packages_dir(stable):
+    """
+    Return stable or normal packages dir
+    """
+    if stable:
+        return "packages-stable"
+    return "packages"
+
+def download_package(arch, os_version, package_filename, stable):
     """
     Download package and store in file
     """
-    if stable:
-        packages = "packages-stable"
-    else:
-        packages = "packages"
-    target_path = os.path.join(ARGS.directory, "pub/OpenBSD/", version, packages,
-                               arch, package_filename)
+    target_path = package_path(stable, os_version, arch, package_filename)
     if not os.path.isfile(target_path):
         url = "https://cdn.openbsd.org/pub/OpenBSD/{}/{}/{}/{}".format(
-            version, packages, arch, package_filename)
+            os_version, packages_dir(stable), arch, package_filename)
         print("Downloading " + url)
         urllib.request.urlretrieve(url, filename=target_path)
     return get_pkg_dependencies(target_path)
