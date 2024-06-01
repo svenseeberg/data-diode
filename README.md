@@ -70,7 +70,11 @@ radio signals, usually with an attached antenna. And at least the audio
 jack is basically an AD converter.
 
 ## Installation instructions
-For details about the installation, read [INSTALL.md](INSTALL.md).
+For details about the installation, read [INSTALL.md](INSTALL.md). For
+instructions about updating the OpenBSD release, read
+[UPDATE.md](UPDATE.md).
+
+Compatible OpenBSD versions: 7.2 to 7.5
 
 ## Required Hardware
 * 2x Raspberry Pi 4B
