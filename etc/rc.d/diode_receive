@@ -8,7 +8,8 @@ daemon_flags="--directory /var/www/diode --device /dev/cuaU0 --arduino /dev/cuaU
 pexp="python3 \/usr\/local\/bin\/diode_receive(.*)
 
 rc_start() {
-        ${rcexec} "${daemon} ${daemon_flags} 2>&1 &"
+        logger "Starting diode receiver with flags ${daemon_flags}"
+        rc_exec "${daemon} ${daemon_flags} &"
 }
 
 rc_cmd $1
