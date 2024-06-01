@@ -72,7 +72,8 @@ jack is basically an AD converter.
 ## Installation instructions
 For details about the installation, read [INSTALL.md](INSTALL.md). For
 instructions about updating the OpenBSD release, read
-[UPDATE.md](UPDATE.md).
+[UPDATE.md](UPDATE.md). The UPDATE.md also documents how to set up and
+maintain/sync an OpenBSD mirror in the internal network.
 
 Compatible OpenBSD versions: 7.2 to 7.5
 
