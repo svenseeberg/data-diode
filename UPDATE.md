@@ -30,7 +30,7 @@ To update OpenBSD on the diode, first update the sender:
    ```sh
    mv ./pub /var/www/diode
    ```
-1. To download all required packages for running the receiver program, edit the `/etc/openbsd-mirror.conf`:
+1. To download all required packages, including dependencies, for running the receiver program, edit the `/etc/openbsd-mirror.conf`:
    ```
    [OpenBSD]
    version = 7.5

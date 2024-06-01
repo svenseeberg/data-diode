@@ -25,9 +25,9 @@ def package_path(stable, os_version, arch, package_filename):
     """
     Build path to package file in local file system
     """
-
-    return os.path.join(ARGS.directory, "pub/OpenBSD/", os_version, packages_dir(stable),
-                        arch, package_filename)
+    directory = os.path.join(ARGS.directory, "pub/OpenBSD/", os_version, packages_dir(stable), arch)
+    Path(directory).mkdir(parents=True, exist_ok=True)
+    return os.path.join(directory, package_filename)
 
 def packages_dir(stable):
     """
