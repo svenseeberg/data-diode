@@ -3,23 +3,22 @@
 Send files through unidirectional serial device
 """
 
-import os
-import sys
-import base64
-import hashlib
-import time
 import argparse
-import re
+import hashlib
+import json
 import logging
-import logging.handlers
-from subprocess import Popen, PIPE
-import serial
+import os
+import socket
+import time
+import sys
+
+from logging import handlers
 
 DIODE_LOGGER = logging.getLogger('DIODE')
 DIODE_LOGGER.setLevel(logging.INFO)
 SYSLOG_FORMATTER = logging.Formatter('%(name)s %(levelname)s: %(message)s')
 STDERR_FORMATTER = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
-SYSLOG_HANDLER = logging.handlers.SysLogHandler(address='/dev/log')
+SYSLOG_HANDLER = handlers.SysLogHandler(address='/dev/log')
 SYSLOG_HANDLER.setFormatter(SYSLOG_FORMATTER)
 STDERR_HANDLER = logging.StreamHandler(sys.stderr)
 STDERR_HANDLER.setLevel(logging.DEBUG)
@@ -28,82 +27,133 @@ DIODE_LOGGER.addHandler(SYSLOG_HANDLER)
 DIODE_LOGGER.addHandler(STDERR_HANDLER)
 
 PARSER = argparse.ArgumentParser(description='Serial device options')
-PARSER.add_argument('--speed', type=int, nargs='?', default=115200,
-                    help='serial bit rate, default 115200')
-PARSER.add_argument('--device', type=str, nargs='?', required=True,
-                    help='serial device, i.e. /dev/cuaU0')
+PARSER.add_argument('--target-subnet', type=str, nargs='?', default="10.125.125.255",
+                    help='Target subnet broadcast IP')
+PARSER.add_argument('--target-port', type=int, nargs='?', default=5005,
+                    help='Target port')
 PARSER.add_argument('--directory', type=str, nargs='?', required=True,
                     help='directory from which to send files')
-PARSER.add_argument('--bs', type=int, nargs='?', default=16384,
-                    help='size of file chunks sent through the serial connection')
-PARSER.add_argument('--sleep', type=float, nargs='?', default=0,
-                    help='wait between each chunks, default 0')
-PARSER.add_argument('--csize', type=int, nargs='?', default=4,
-                    help='chunk size in MB, default 4')
 ARGS = PARSER.parse_args()
 
-def wln(line):
-    """
-    Write line to serial device
-    """
-    ser.write(line)
-    ser.write(b'\n')
 
+CHUNK_SIZE = 512
+TARGET_IP = ARGS.target_subnet
+TARGET_PORT = int(ARGS.target_port)
+SOURCE_DIR = ARGS.directory
+RATE_LIMIT_DELAY_CYCLES = 10000
+RESEND_PACKET = 1
+SCAN_INTERVAL = 1
+STABILITY_CHECK_DELAY = 1
 
-with serial.Serial(ARGS.device, ARGS.speed, timeout=1) as ser:
-    DIODE_LOGGER.info("Scanning %s", ARGS.directory)
-    wln(b'sync ...')
-    time.sleep(0.1)
-    wln(b'Hello world!')
-    while True:
-        for root, dirs, files in os.walk(ARGS.directory):
-            for filename in files:
-                filepath = os.path.join(root, filename)
-                p = Popen(['fuser', filepath], stdout=PIPE)
-                output, err = p.communicate()
-                if output == filepath + ":":
-                    DIODE_LOGGER.error("Skipping %s, in use.", filename)
-                    continue
-                filesize = os.stat(filepath).st_size
-                if filesize > (ARGS.csize * 1024 * 1024):
-                    DIODE_LOGGER.info("File %s too large, splitting into chunks", filename)
-                    p = Popen(["/usr/bin/split", "-b", "{}m".format(ARGS.csize), filepath,
-                               "{}-part_".format(filename)], cwd=root)
-                    p.communicate()
-                    os.remove(filepath)
-                    continue
-                rel_filename = os.path.relpath(filepath, ARGS.directory)
-                DIODE_LOGGER.info("Sending %s", rel_filename)
-                m = hashlib.md5()
-                b64_filename = base64.b64encode(bytes(rel_filename, 'ascii'))
-                m.update(b64_filename)
-                wln(bytes(chr(1), 'ascii')) # SOH - Start Of Header
-                wln(b64_filename+bytes(" " + str(filesize), 'ascii'))
-                wln(bytes(chr(2), 'ascii')) # STX - Start of Text
-                with open(filepath, "rb") as fo:
-                    while True:
-                        content = fo.read(int(ARGS.bs))
-                        if not content:
-                            break
-                        content = base64.b64encode(content)
-                        m.update(content)
-                        wln(content)
-                        time.sleep(ARGS.sleep)
-                wln(bytes(chr(3), 'ascii')) # ETX - End of Text
-                hashsum = m.hexdigest().encode("ascii", "ignore")
-                wln(hashsum)
-                wln(bytes(chr(4), 'ascii')) # EOT - End of Transmission
-                os.remove(filepath)
-                search = re.search("(.*)-part_[a-z]{2}", filename)
-                if search:
-                    basename = search.group(1)
-                    chunks_list = sorted([i for i in files if re.match(
-                        basename + "-part_[a-z]{2}", i)])
-                    if chunks_list and chunks_list[-1] == filename:
-                        DIODE_LOGGER.info("Last chunk for %s transferred.", filename)
-                        wln(bytes(chr(25), 'ascii')) # EM - End of Medium
-                        time.sleep(2)
-                        # extra time for the receiver to start assembling chunks
-                DIODE_LOGGER.info("Done.")
-                time.sleep(5)
-        time.sleep(1)
+PKG_TYPE_START = 0
+PKG_TYPE_DATA = 1
+PKG_TYPE_END = 2
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+
+def busy_wait_sleep():
+    """
+    time.sleep() is too slow (on OpenBSD). Looping through
+    a range can introduce "arbitrarily" short delays. Can be
+    replaced by any other function that can introduce delays in
+    the range of microseconds.
+    """
+    for n in range(0, RATE_LIMIT_DELAY_CYCLES):
+        i = n
+
+def get_chunks(filepath: str):
+    """
+    Read file chunks
+    """
+    with open(filepath, 'rb') as f:
+        while chunk := f.read(CHUNK_SIZE):
+            yield chunk
+
+def send_start_paket(filepath: str, rel_path: str, rel_path_hash: str) -> None:
+    """
+    Send first paket with meta data
+    """
+    DIODE_LOGGER.info("Sending file: %s", rel_path)
+    filesize = os.path.getsize(filepath)
+    start_packet = json.dumps({
+        'p': rel_path,
+        's': filesize,
+        't': PKG_TYPE_START,
+        'h': rel_path_hash
+    }).encode()
+    for n in range(0, RESEND_PACKET):  # pylint: disable=unused-variable
+        sock.sendto(start_packet, (TARGET_IP, TARGET_PORT))
+
+def send_end_paket(filepath: str, rel_path: str, count: int) -> None:
+    """
+    Send last paket with final count
+    """
+    end_packet = json.dumps({"p":rel_path, 't': PKG_TYPE_END, 'c': count}).encode()
+    for n in range(0, RESEND_PACKET):  # pylint: disable=unused-variable
+        sock.sendto(end_packet, (TARGET_IP, TARGET_PORT))
+    os.remove(filepath)
+    DIODE_LOGGER.info("Finished sending file: %s", rel_path)
+
+def send_data_paket(rel_path_hash: str, chunk: bytes, count: int) -> None:
+    """
+    Send data paket
+    """
+    hash_digest = hashlib.md5(chunk).hexdigest()
+    packet = {
+        'c': count,
+        'p': rel_path_hash,
+        'h': hash_digest,
+        'd': chunk.hex(),
+        't': PKG_TYPE_DATA,
+    }
+    data = json.dumps(packet).encode()
+    for n in range(0, RESEND_PACKET):  # pylint: disable=unused-variable
+        sock.sendto(data, (TARGET_IP, TARGET_PORT))
+        busy_wait_sleep()
+
+def send_file_chunks(filepath: str, rel_path: str) -> None:
+    """
+    Send a file chunk via UDP along with path and hash
+
+    :param filepath: full path to file
+    :param rel_path: relative path to file in relation to watched dir
+    """
+    rel_path_hash = hashlib.md5(rel_path.encode("utf-8")).hexdigest()
+    send_start_paket(filepath, rel_path, rel_path_hash)
+    count = 0
+    for chunk in get_chunks(filepath):
+        send_data_paket(rel_path_hash, chunk, count)
+        count += 1
+    send_end_paket(filepath, rel_path, count)
+
+def is_file_stable(filepath: str, delay: int = STABILITY_CHECK_DELAY) -> bool:
+    """Check if file size is stable after waiting for delay."""
+    try:
+        initial_size = os.path.getsize(filepath)
+        time.sleep(delay)
+        return os.path.getsize(filepath) == initial_size
+    except FileNotFoundError:
+        return False
+
+def scan_directory() -> None:
+    """
+    Watch directory for new files. Send new files via UDP.
+    """
+    for root, _, files in os.walk(SOURCE_DIR):
+        for file in files:
+            full_path = os.path.join(root, file)
+            rel_path = os.path.relpath(full_path, SOURCE_DIR)
+
+            if is_file_stable(full_path):
+                send_file_chunks(full_path, rel_path)
+
+if __name__ == "__main__":
+    os.makedirs(SOURCE_DIR, exist_ok=True)
+    DIODE_LOGGER.info("Watching for new files in: %s", SOURCE_DIR)
+    try:
+        while True:
+            scan_directory()
+            time.sleep(SCAN_INTERVAL)
+    except KeyboardInterrupt:
+        DIODE_LOGGER.info("Stopped watching")
