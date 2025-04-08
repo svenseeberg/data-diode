@@ -46,9 +46,8 @@
 1. Change the boot order to boot the OpenBSD efi file first.
 
 # Hardware setup
-1. Attach one UART adapter to each RPi.
-1. Connect the ground pins of both UART adapters.
-1. Connect the Tx pin of the sending RPi to the Rx pin of the receiving RPi.
+1. Connect the fiber converters with USB ethernet adapters to the Raspberry Pis.
+1. Use the fiber signal splitter to send the Tx signal from the sender back into the sender Rx and into the receiver Rx.
 1. If you want to physically guarantee that there is no reverse channel, you can add a diode with a pull down or pull up resistor betwen the Tx and Rx pins. Alternatively, an optocoupler can be used to galvanically separate the circuits. Don't forget to [disconnect the bluetooth and WLAN antennae](https://raspberrypi.stackexchange.com/questions/114596/desolder-wifi-bluetooth-module-on-a-raspberry-pi-4).
 1. Flash the `arduino/arduino.ino` file on the Arduino.
 1. Connect the Arduino via USB to the receiving RPi.
@@ -57,6 +56,7 @@
 # Diode setup
 Clone this repo or download the latest .zip file and extract. Then `cd` into the directory.
 ## Receiver setup
+1. Install Python3.
 1. Copy the rc.d file:
    ```
    cp ./etc/rc.d/diode_receive /etc/rc.d/
@@ -74,6 +74,7 @@ Clone this repo or download the latest .zip file and extract. Then `cd` into the
    ```
 
 ## Sender setup
+1. Install Python3
 1. Copy the rc.d file:
    ```
    cp ./etc/rc.d/diode_send /etc/rc.d/
