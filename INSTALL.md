@@ -38,13 +38,12 @@
 1. Plug the SD card and USB drive into the RPi.
 
 # Hardware setup
-1. Connect the fiber converters with USB ethernet adapters to the Raspberry Pis.
-1. Use the fiber signal splitter to send the Tx signal from the sender back into the sender Rx and into the receiver Rx.
-1. If you want to physically guarantee that there is no reverse channel, you can add a diode with a pull down or pull up resistor betwen the Tx and Rx pins. Alternatively, an optocoupler can be used to galvanically separate the circuits. Don't forget to [disconnect the bluetooth and WLAN antennae](https://raspberrypi.stackexchange.com/questions/114596/desolder-wifi-bluetooth-module-on-a-raspberry-pi-4).
-1. Flash the `arduino/arduino.ino` file on the Arduino.
-1. Connect the Arduino via USB to the receiving RPi.
-1. Set up the power supply for both RPis.
 1. Attach one USB Ethernet adapters to each Raspberry Pi. Use the (blue) USB 3 ports.
+1. Connect the USB Ethernet adapters to the fiber converters.
+1. Use the fiber signal splitter to send the Tx signal from the sender back into the sender Rx and into the receiver Rx.
+1. Set up the power supply for both RPis.
+1. Optional: Flash the `arduino/arduino.ino` file on the Arduino.
+1. Optional: Connect the Arduino via USB to the receiving RPi.
 
 ## Configure UEFI and install OpenBSD
 1. When the UEFI logo appears, hit the ESC key to enter the setup.
