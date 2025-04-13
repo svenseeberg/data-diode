@@ -41,8 +41,8 @@ In a previous version a Serial connection was used. Check out the
 tag for the Serial version.
 
 ## Speed
-The speed of the diode is mostly limited by the UART devices. A data rate
-of about 5 MB/s can be achieved. This is fast enough to keep a mirror of
+The speed of the diode is mostly limited by packet loss. A data rate
+of about 1 MB/s can be achieved. This is fast enough to keep a mirror of
 OpenBSD with a selected subset of packages up to date in an internal
 network.
 
