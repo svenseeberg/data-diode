@@ -112,6 +112,8 @@ def new_file(path: str, size: int, path_hash: str) -> None:
     global CUR_FILE
     global CUR_FILE_SIZE
     global CUR_PATH_HASH
+    if CUR_FILE == path:
+        return
     if CUR_FILE is not None:
         DIODE_LOGGER.error("Unfinished previous transfer of %s failed", CUR_FILE)
         reset_transfer(success=False)
@@ -130,11 +132,11 @@ def finish_file(packet: dict) -> None:
     """
     Validate that file has been completed and append to finished files
     """
-    if len(KNOWN_CHUNKS) != packet['c']:
+    if CUR_FILE is not None and len(KNOWN_CHUNKS) != packet['c']:
         DIODE_LOGGER.error("Missing chunks for %s", packet['p'])
         os.remove(os.path.join(OUTPUT_DIR, CUR_FILE))
         reset_transfer(success=False)
-    else:
+    elif CUR_FILE is not None:
         DIODE_LOGGER.info("Finished receiving %s", packet['p'])
         reset_transfer(success=True)
 
