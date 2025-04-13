@@ -42,19 +42,38 @@ BIND_PORT = int(ARGS.bind_port)
 BIND_IP = ARGS.bind_subnet
 OUTPUT_DIR = ARGS.directory
 
-# Transfer state
-FILES_TRANSFERRED = []
-FILES_FAILED = []
-KB_TRANSFERRED = 0
-CUR_FILE = None
-CUR_FILE_SIZE = 0
-KNOWN_CHUNKS = set()
-CUR_PATH_HASH = None
-
 # Static variables
 PKG_TYPE_START = 0
 PKG_TYPE_DATA = 1
 PKG_TYPE_END = 2
+
+# Transfer state
+FILES_TRANSFERRED = []
+FILES_FAILED = []
+
+class ReceiveState:
+    def __init__(self):
+        self.kb_transferred = 0
+        self.file_path = None
+        self.file_size = 0
+        self.known_chunks = set()
+        self.path_hash = None
+
+    def add_kbytes(self, chunk_kbytes: int):
+        """
+        Add transferred bytes
+        """
+        self.kb_transferred = self.kb_transferred + chunk_kbytes
+
+    def new_transfer(self, file_path: str, path_hash: str, file_size: int):
+        """
+        Store data for new transfer
+        """
+        self.file_path = file_path
+        self.path_hash = path_hash
+        self.file_size = file_size
+
+RECEIVE_STATE = ReceiveState()
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -82,14 +101,14 @@ class Display:
         """
         Send info to Arduino to update LCD
         """
-        if CUR_FILE is not None:
+        if RECEIVE_STATE.file_path is not None:
             state = "Rx   "
             progress = int(progress)
         else:
             state = "Wait "
-        data_mb = int(KB_TRANSFERRED/1024)
+        data_mb = int(RECEIVE_STATE.kb_transferred/1024)
         line1 = state + str(len(FILES_TRANSFERRED))+"F " + str(len(FILES_FAILED))+"E"
-        line2 = str(data_mb) + "MB" + (" " + str(progress) + "%" if CUR_FILE is not None else "")
+        line2 = str(data_mb) + "MB" + (" " + str(progress) + "%" if RECEIVE_STATE.file_path is not None else "")
         self.arduino.write(bytes(line1+'\n', 'ascii'))
         self.arduino.write(bytes(line2+'\n', 'ascii'))
 
@@ -97,29 +116,23 @@ def write_file_from_chunks(path: str, chunks: list) -> None:
     """
     Write validated chunks to file
     """
-    global KB_TRANSFERRED
     full_path = os.path.join(OUTPUT_DIR, path)
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
     with open(full_path, 'ab') as f:
         for chunk in chunks:
-            KB_TRANSFERRED = KB_TRANSFERRED + len(chunks)
+            RECEIVE_STATE.add_kbytes(len(chunks))
             f.write(chunk)
 
 def new_file(path: str, size: int, path_hash: str) -> None:
     """
     Log messages for new file. Delete file if exists.
     """
-    global CUR_FILE
-    global CUR_FILE_SIZE
-    global CUR_PATH_HASH
-    if CUR_FILE == path:
+    if RECEIVE_STATE.file_path == path:
         return
-    if CUR_FILE is not None:
-        DIODE_LOGGER.error("Unfinished previous transfer of %s failed", CUR_FILE)
+    if RECEIVE_STATE.file_path is not None:
+        DIODE_LOGGER.error("Unfinished previous transfer of %s failed", RECEIVE_STATE.file_path)
         reset_transfer(success=False)
-    CUR_FILE = path
-    CUR_PATH_HASH = path_hash
-    CUR_FILE_SIZE = size
+    RECEIVE_STATE.new_transfer(path, path_hash, size)
     DIODE_LOGGER.info("Receiving file %s", path)
     try:
         os.remove(os.path.join(OUTPUT_DIR, path))
@@ -132,11 +145,11 @@ def finish_file(packet: dict) -> None:
     """
     Validate that file has been completed and append to finished files
     """
-    if CUR_FILE is not None and len(KNOWN_CHUNKS) != packet['c']:
+    if RECEIVE_STATE.file_path is not None and len(RECEIVE_STATE.known_chunks) != packet['c']:
         DIODE_LOGGER.error("Missing chunks for %s", packet['p'])
-        os.remove(os.path.join(OUTPUT_DIR, CUR_FILE))
+        os.remove(os.path.join(OUTPUT_DIR, RECEIVE_STATE.file_path))
         reset_transfer(success=False)
-    elif CUR_FILE is not None:
+    elif RECEIVE_STATE.file_path is not None:
         DIODE_LOGGER.info("Finished receiving %s", packet['p'])
         reset_transfer(success=True)
 
@@ -144,14 +157,12 @@ def reset_transfer(success: bool = True) -> None:
     """
     Reset global variables related to transfer state.
     """
-    global CUR_FILE
-    global KNOWN_CHUNKS
+    global RECEIVE_STATE
     if success:
-        FILES_TRANSFERRED.append(CUR_FILE)
+        FILES_TRANSFERRED.append(RECEIVE_STATE.file_path)
     else:
-        FILES_FAILED.append(CUR_FILE)
-    CUR_FILE = None
-    KNOWN_CHUNKS = set()
+        FILES_FAILED.append(RECEIVE_STATE.file_path)
+    RECEIVE_STATE = ReceiveState()
     if DISPLAY is not None:
         DISPLAY.update()
 
@@ -180,8 +191,8 @@ def chunk_is_valid(packet: dict, chunk_bytes: bytes) -> bool:
     Check if chunk is valid
     """
     return (
-        packet['p'] == CUR_PATH_HASH and
-        packet['c'] not in KNOWN_CHUNKS and
+        packet['p'] == RECEIVE_STATE.path_hash and
+        packet['c'] not in RECEIVE_STATE.known_chunks and
         hashlib.md5(chunk_bytes).hexdigest() == packet['h']
     )
 
@@ -191,8 +202,8 @@ def process_chunk(packet: dict) -> None:
     """
     chunk_bytes = bytes.fromhex(packet['d'])
     if chunk_is_valid(packet, chunk_bytes):
-        write_file_from_chunks(CUR_FILE, [chunk_bytes])
-        KNOWN_CHUNKS.add(packet['c'])
+        write_file_from_chunks(RECEIVE_STATE.file_path, [chunk_bytes])
+        RECEIVE_STATE.known_chunks.add(packet['c'])
         if DISPLAY is not None and packet['c'] % 1000 == 0:
             DISPLAY.update()
 
