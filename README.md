@@ -57,7 +57,7 @@ instructions about updating the OpenBSD release, read
 [UPDATE.md](UPDATE.md). The UPDATE.md also documents how to set up and
 maintain/sync an OpenBSD mirror in the internal network.
 
-Compatible OpenBSD versions: 7.2 to 7.5
+Compatible OpenBSD versions: 7.2 to 7.6
 
 ## Required Hardware
 * 2x Raspberry Pi 4B
@@ -70,7 +70,6 @@ Compatible OpenBSD versions: 7.2 to 7.5
 ## Optional Hardware
 * 1x Arduino including USB cable
 * 1x 1602 LCD with I2C
-* 1x Optocoupler or diode + resistor
 * 1x large enough case to house everything
 * 2x RJ45 feedthroughs (i.e. Neutrik NE8FDP)
 
