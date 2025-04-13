@@ -126,7 +126,7 @@ def new_file(path: str, size: int, path_hash: str) -> None:
     if DISPLAY is not None:
         DISPLAY.update()
 
-def finish_file(packet: str) -> None:
+def finish_file(packet: dict) -> None:
     """
     Validate that file has been completed and append to finished files
     """
@@ -179,7 +179,7 @@ def chunk_is_valid(packet: dict, chunk_bytes: bytes) -> bool:
     """
     return (
         packet['p'] == CUR_PATH_HASH and
-        packet['h'] not in KNOWN_CHUNKS and
+        packet['c'] not in KNOWN_CHUNKS and
         hashlib.md5(chunk_bytes).hexdigest() == packet['h']
     )
 
@@ -190,7 +190,7 @@ def process_chunk(packet: dict) -> None:
     chunk_bytes = bytes.fromhex(packet['d'])
     if chunk_is_valid(packet, chunk_bytes):
         write_file_from_chunks(CUR_FILE, [chunk_bytes])
-        KNOWN_CHUNKS.add(packet['h'])
+        KNOWN_CHUNKS.add(packet['c'])
         if DISPLAY is not None and packet['c'] % 1000 == 0:
             DISPLAY.update()
 
