@@ -4,24 +4,21 @@ Receive files through unidirectional serial device
 """
 # pylint: disable=W0603
 
-
-import os
-import sys
-import base64
-import hashlib
 import argparse
-import time
-import re
+import hashlib
+import json
 import logging
-import logging.handlers
-from subprocess import Popen
-import serial
+import os
+import socket
+import sys
+
+from logging import handlers
 
 DIODE_LOGGER = logging.getLogger('DIODE')
 DIODE_LOGGER.setLevel(logging.INFO)
 SYSLOG_FORMATTER = logging.Formatter('%(name)s %(levelname)s: %(message)s')
 STDERR_FORMATTER = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
-SYSLOG_HANDLER = logging.handlers.SysLogHandler(address='/dev/log')
+SYSLOG_HANDLER = handlers.SysLogHandler(address='/dev/log')
 SYSLOG_HANDLER.setFormatter(SYSLOG_FORMATTER)
 STDERR_HANDLER = logging.StreamHandler(sys.stderr)
 STDERR_HANDLER.setLevel(logging.DEBUG)
@@ -30,168 +27,175 @@ DIODE_LOGGER.addHandler(SYSLOG_HANDLER)
 DIODE_LOGGER.addHandler(STDERR_HANDLER)
 
 PARSER = argparse.ArgumentParser(description='Serial device options')
-PARSER.add_argument('--speed', type=int, nargs='?', default=115200,
-                    help='serial bit rate, default 115200')
-PARSER.add_argument('--device', type=str, nargs='?', required=True,
-                    help='serial device, i.e. /dev/cuaU0')
-PARSER.add_argument('--arduino', type=str, nargs='?', required=False,
-                    help='serial device, i.e. /dev/cuaU1')
+PARSER.add_argument('--bind-subnet', type=str, nargs='?', default="10.125.125.255",
+                    help='Bind to broadcast address / subnet')
+PARSER.add_argument('--bind-port', type=int, nargs='?', default=5005,
+                    help='Bind port')
 PARSER.add_argument('--directory', type=str, nargs='?', required=True,
                     help='directory from which to send files')
-
+PARSER.add_argument('--arduino', type=str, nargs='?', required=False,
+                    help='serial device, i.e. /dev/cuaU1')
 ARGS = PARSER.parse_args()
 
-def assemble_chunks(args, filename):
-    """
-    Recreate original file from parts
-    """
-    chunks_globber = re.search("(.*-part_)[a-z]{2}", filename).group(1)
-    orig_name = re.search("(.*)-part_[a-z]{2}", filename).group(1)
-    DIODE_LOGGER.info("Assembling previously transmitted chunks to %s", orig_name)
-    cmd = "/bin/cat {}* > {}".format(chunks_globber, orig_name)
-    Popen(cmd, shell=True, executable='/bin/ksh', cwd=args.directory)
+# System setup based on arguments
+BIND_PORT = int(ARGS.bind_port)
+BIND_IP = ARGS.bind_subnet
+OUTPUT_DIR = ARGS.directory
 
+# Transfer state
+FILES_TRANSFERRED = []
+FILES_FAILED = []
+KB_TRANSFERRED = 0
+CUR_FILE = None
+CUR_FILE_SIZE = 0
+KNOWN_CHUNKS = set()
+CUR_PATH_HASH = None
 
-class FileTransfer:  # pylint: disable=too-few-public-methods
-    """
-    Class to handle data of a file transfer
-    """
+# Static variables
+PKG_TYPE_START = 0
+PKG_TYPE_DATA = 1
+PKG_TYPE_END = 2
 
-    def __init__(self):
-        self.size = 0
-        self.name = None
-        self.name_b64 = None
-        self.hashsum = None
-        self.hashsum_received = None
-        self.content = None
-        self.hasher = hashlib.md5()
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+sock.bind((BIND_IP, BIND_PORT))
 
-class DiodeHandler:  # pylint: disable=too-many-instance-attributes
+class Display:
     """
-    Class for transferring data and keeping track of the status
+    Class for handling the LCD display attached to the Arduino.
     """
-    def __init__(self, args, logger):
-        self.args = args
-        self.logger = logger
-        self.total_data = 0
-        self.files_total = 0
-        self.files_error = 0
-        self.transferred_data = 0
-        self.last_filename = None
-        self.started = False
-        self.arduino = serial.Serial(args.arduino, 38400, timeout=1)
+    def __init__(self, serial_interface: str) -> None:
+        import serial  # pylint: disable=import-outside-toplevel
+        self.arduino = serial.Serial(serial_interface, 38400, timeout=1)
+        self.reset()
+        self.update()
 
-    def send_status(self, state_id, transferred_file):
+    def reset(self) -> None:
+        """
+        blank all characters on screen
+        """
+        self.arduino.write(bytes('               \n', 'ascii'))
+        self.arduino.write(bytes('               \n', 'ascii'))
+
+    def update(self) -> None:
         """
         Send info to Arduino to update LCD
         """
-        if self.args.arduino:
-            if state_id == 1:
-                state = "Rx   "
-                progress = int((self.transferred_data / transferred_file.size)*100)
-            else:
-                state = "Wait "
-            data_kb = int(self.total_data/1024)
-            line1 = (state + str(self.files_total)+"F " + str(self.files_error)+"E")
-            line2 = (str(data_kb) + "KB" + (" " + str(progress) + "%" if
-                                            state_id == 1 else ""))
-            self.arduino.write(bytes(line1+'\n', 'ascii'))
-            self.arduino.write(bytes(line2+'\n', 'ascii'))
-
-    def reset(self, success):
-        """
-        reset status variables
-        """
-        self.started = False
-        self.transferred_data = 0
-        self.files_total = self.files_total + 1
-        if not success:
-            self.files_error = self.files_error + 1
-        self.arduino.write(bytes('               \n', 'ascii'))
-        self.arduino.write(bytes('               \n', 'ascii'))
-
-    def start_transmission(self, ser):
-        """
-        Start a transmission of a file
-        """
-        self.started = True
-        transferred_file = FileTransfer()
-        transferred_file.name_b64, filesize = ser.readline().strip().split(b" ")
-        transferred_file.size = int(filesize)
-        transferred_file.name = base64.b64decode(transferred_file.name_b64).decode('ascii')
-        transferred_file.hasher.update(transferred_file.name_b64)
-        self.logger.info("Receiving file %s", transferred_file.name)
-        return transferred_file
-
-    def end_transmission(self, transferred_file):
-        """
-        Transmission has ended, write file to disk
-        """
-        transferred_file.hashsum_received = (transferred_file.hasher.hexdigest()
-                                             .encode("ascii", "ignore"))
-        if transferred_file.hashsum_received == transferred_file.hashsum:
-            filepath = os.path.join(self.args.directory, transferred_file.name)
-            if os.path.dirname(filepath) and not os.path.exists(
-                    os.path.dirname(filepath)):
-                os.makedirs(os.path.dirname(filepath))
-            self.logger.info("Hashsums match, writing to %s", filepath)
-            resultfile = open(filepath, "wb")
-            resultfile.write(transferred_file.content)
-            resultfile.close()
-            self.reset(True)
+        if CUR_FILE is not None:
+            state = "Rx   "
+            progress = int(progress)
         else:
-            self.logger.error("Hashsums do not match, failed to transfer %s", filepath)
-            self.reset(False)
-        self.send_status(0, transferred_file)
-        self.last_filename = transferred_file.name
+            state = "Wait "
+        data_mb = int(KB_TRANSFERRED/1024)
+        line1 = state + str(len(FILES_TRANSFERRED))+"F " + str(len(FILES_FAILED))+"E"
+        line2 = str(data_mb) + "MB" + (" " + str(progress) + "%" if CUR_FILE is not None else "")
+        self.arduino.write(bytes(line1+'\n', 'ascii'))
+        self.arduino.write(bytes(line2+'\n', 'ascii'))
 
-    def buffer_content(self, ser, transferred_file):
-        """
-        Receive content of file
-        """
-        self.logger.info("Buffering content.")
-        self.send_status(1, transferred_file)
-        transferred_file.content = b''
-        while True:
-            line = ser.readline().strip()
-            if line == bytes(chr(3), 'ascii'): # ETX - End of Text:
-                transferred_file.hashsum = ser.readline().strip()
-                break
+def write_file_from_chunks(path: str, chunks: list) -> None:
+    """
+    Write validated chunks to file
+    """
+    global KB_TRANSFERRED
+    full_path = os.path.join(OUTPUT_DIR, path)
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'ab') as f:
+        for chunk in chunks:
+            KB_TRANSFERRED = KB_TRANSFERRED + len(chunks)
+            f.write(chunk)
+
+def new_file(path: str, size: int, path_hash: str) -> None:
+    """
+    Log messages for new file. Delete file if exists.
+    """
+    global CUR_FILE
+    global CUR_FILE_SIZE
+    global CUR_PATH_HASH
+    if CUR_FILE is not None:
+        DIODE_LOGGER.error("Unfinished previous transfer of %s failed", CUR_FILE)
+        reset_transfer(success=False)
+    CUR_FILE = path
+    CUR_PATH_HASH = path_hash
+    CUR_FILE_SIZE = size
+    DIODE_LOGGER.info("Receiving file %s", path)
+    try:
+        os.remove(os.path.join(OUTPUT_DIR, path))
+    except OSError:
+        pass
+    if DISPLAY is not None:
+        DISPLAY.update()
+
+def finish_file(packet: str) -> None:
+    """
+    Validate that file has been completed and append to finished files
+    """
+    if len(KNOWN_CHUNKS) != packet['c']:
+        DIODE_LOGGER.error("Missing chunks for %s", packet['p'])
+        os.remove(os.path.join(OUTPUT_DIR, CUR_FILE))
+        reset_transfer(success=False)
+    else:
+        DIODE_LOGGER.info("Finished receiving %s", packet['p'])
+        reset_transfer(success=True)
+
+def reset_transfer(success: bool = True) -> None:
+    """
+    Reset global variables related to transfer state.
+    """
+    global CUR_FILE
+    global KNOWN_CHUNKS
+    if success:
+        FILES_TRANSFERRED.append(CUR_FILE)
+    else:
+        FILES_FAILED.append(CUR_FILE)
+    CUR_FILE = None
+    KNOWN_CHUNKS = set()
+    if DISPLAY is not None:
+        DISPLAY.update()
+
+def listen() -> None:
+    """
+    Listen for incoming UDP packets, validate & write chunks
+    """
+    while True:
+        try:
+            data, _ = sock.recvfrom(4096)
+            packet = json.loads(data.decode())
+            if packet["t"] == PKG_TYPE_DATA:
+                process_chunk(packet)
+            elif packet["t"] == PKG_TYPE_START:
+                new_file(packet["p"], packet["s"], packet["h"])
+            elif packet["t"] == PKG_TYPE_END:
+                finish_file(packet)
             else:
-                transferred_file.hasher.update(line)
-                try:
-                    line_decoded = base64.b64decode(line)
-                except base64.binascii.Error:
-                    self.logger.error("Cannot decode Base64, aborting %s", transferred_file.name)
-                    self.reset(False)
-                    break
-                transferred_file.content += line_decoded
-                self.transferred_data = self.transferred_data + len(line_decoded)
-                self.total_data = self.total_data + len(line_decoded)
-                self.send_status(1, transferred_file)
+                raise ValueError("Unknown packet type")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            DIODE_LOGGER.error(e)
+            reset_transfer(success=False)
 
-    def transfer(self):
-        """
-        receive data
-        """
-        with serial.Serial(self.args.device, self.args.speed, timeout=1) as ser:
-            time.sleep(3)
-            transferred_file = None
-            self.send_status(0, transferred_file)
-            while True:
-                line = ser.readline().strip().decode('ascii')
-                if line == chr(1): # SOH - Start Of Header
-                    transferred_file = self.start_transmission(ser)
-                elif (self.started and line == chr(2)): # STX - Start of Text
-                    self.buffer_content(ser, transferred_file)
-                elif(self.started and line == chr(4)): # EOT - End of Transmission
-                    self.end_transmission(transferred_file)
-                    transferred_file = None
-                elif line == chr(25):
-                    assemble_chunks(self.args, self.last_filename)
-                else:
-                    self.send_status(0, transferred_file)
-                    time.sleep(0.1)
+def chunk_is_valid(packet: dict, chunk_bytes: bytes) -> bool:
+    """
+    Check if chunk is valid
+    """
+    return (
+        packet['p'] == CUR_PATH_HASH and
+        packet['h'] not in KNOWN_CHUNKS and
+        hashlib.md5(chunk_bytes).hexdigest() == packet['h']
+    )
 
-DIODE = DiodeHandler(ARGS, DIODE_LOGGER)
-DIODE.transfer()
+def process_chunk(packet: dict) -> None:
+    """
+    Process data paket
+    """
+    chunk_bytes = bytes.fromhex(packet['d'])
+    if chunk_is_valid(packet, chunk_bytes):
+        write_file_from_chunks(packet['p'], [chunk_bytes])
+        KNOWN_CHUNKS.add(packet['h'])
+        if DISPLAY is not None and packet['c'] % 1000 == 0:
+            DISPLAY.update()
+
+DISPLAY = Display(ARGS.arduino) if ARGS.arduino else None
+
+if __name__ == "__main__":
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    listen()

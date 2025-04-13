@@ -1,10 +1,8 @@
 ## About
 This project contains the source code for a DIY data diode. It uses
-Raspberry Pis to unidirectionally transmit files via the serial
-interface from one to the other. As the reverse direction pins are
-not connected, no transfer in the other direction is possible. An
-Arduino can be used to monitor the traffic and show the status on
-a 1602 LCD.
+Raspberry Pis to unidirectionally transmit files via UDP through a
+single fiber optics cable without a back channel. An Arduino can be
+used to monitor the traffic and show the status on a 1602 LCD.
 
 ![Finished Diode](images/case.jpg)
 
@@ -16,6 +14,9 @@ download OpenBSD packages with their dependencies for transferral
 through the diode. They can then be served from a webserver in the
 internal network.
 
+Version 3 of this build is based on
+[Vrolijk/OSDD](https://github.com/Vrolijk/OSDD).
+
 I recommend to also look into 
 [wavestone-cdt/dyode](https://github.com/wavestone-cdt/dyode),
 which is a very similar project.
@@ -24,7 +25,7 @@ which is a very similar project.
 The sending Raspberry Pi continuously checks a directory for new files.
 Files can be dropped into this directory with any protocol. If a new
 file is detected, it will be split into chunks, which will then be
-transferred through the unidirectional serial wire. In the end, a hash
+transferred through the unidirectional fiber cable. In the end, a hash
 sum is transferred as well. If the hash of the transferred data matches
 the sent hash, the received file will be stored in a target directory of
 the receiving Raspberry Pi, ready for pick up. If the hashes do not
@@ -35,39 +36,20 @@ the total number of files transferred, the number of errors that
 occured, the total amount of transferred KB, and the progress
 (percentage) of the current file transfer.
 
+In a previous version a Serial connection was used. Check out the 
+[`v2.3`](https://github.com/svenseeberg/data-diode/releases/tag/v2.3)
+tag for the Serial version.
+
 ## Speed
-The speed of the diode is mostly limited by the UART devices. With cheap
-USB UART adapters, a data rate of about 20KB/s can be achieved. This is
-fast enough to keep a mirror of OpenBSD with a selected subset of
-packages up to date in an internal network.
+The speed of the diode is mostly limited by the UART devices. A data rate
+of about 5 MB/s can be achieved. This is fast enough to keep a mirror of
+OpenBSD with a selected subset of packages up to date in an internal
+network.
 
 ## Security
 There are some serious limitations to the concept of the diode and the
-mystical [air gap](https://cyber.bgu.ac.il/air-gap/) when using
-Raspberry Pis (and probably (m)any other devices). Therefore, the
-security mainly hinges on the integrity of the operating system on the
-receiving Pi. The main advantage in this setup is that there is no
-default bidrectional communication. And the interactive use of the
-receiving Pi is very limited (receiving files via serial communication
-and writing them to the file system & updating the operating system
-frequently). This should make it a little more difficult for an attacker
-to gain control of the device. However, if the receiving device is
-compromized, there are probably lots of channels for bidrectional
-communication. I can think of a few examples, which could potentially be
-used. And I'm not even taking computers/devices into account that are
-connected to the receiving Pi in the internal network.
-
-* The power management integrated circuit (MxL7704) has a I2C connection
-to the SoC. Therefore an attacker might be able to use this device and
-monitor the supply voltage, which could potentially be manipulated by
-the power consumption of the other Pi, if both use the same power
-supply.
-* Even if the WLAN and bluetooth antenna is disconnected, a stub
-antenna still remains. I would not be surprised if it is possible to use
-this for short range communication.
-* There are many projects that use the GPIO clock pins for transmitting
-radio signals, usually with an attached antenna. And at least the audio
-jack is basically an AD converter.
+mystical [air gap](https://cyber.bgu.ac.il/air-gap/). Beyond that all
+security caveats apply.
 
 ## Installation instructions
 For details about the installation, read [INSTALL.md](INSTALL.md). For
@@ -79,9 +61,10 @@ Compatible OpenBSD versions: 7.2 to 7.5
 
 ## Required Hardware
 * 2x Raspberry Pi 4B
-* 2x USB UART serial adapters
+* 2x TP-LINK MC200CM Gigabit Ethernet converter
+* 2x USB Gigabit Ethernet adapters (use ASIX AX88179 chipset for OpenBSD support)
+* 1x Fiber Optical Splitter 1x2 PLC SC/UPC PCL Splitter
 * 2x USB-C cables
-* 2x female-female jumper wires
 * 1x USB power supply with 2 outlets
 
 ## Optional Hardware
