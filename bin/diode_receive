@@ -189,7 +189,7 @@ def process_chunk(packet: dict) -> None:
     """
     chunk_bytes = bytes.fromhex(packet['d'])
     if chunk_is_valid(packet, chunk_bytes):
-        write_file_from_chunks(packet['p'], [chunk_bytes])
+        write_file_from_chunks(CUR_FILE, [chunk_bytes])
         KNOWN_CHUNKS.add(packet['h'])
         if DISPLAY is not None and packet['c'] % 1000 == 0:
             DISPLAY.update()
