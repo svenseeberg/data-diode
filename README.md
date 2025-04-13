@@ -42,7 +42,7 @@ tag for the Serial version.
 
 ## Speed
 The speed of the diode is mostly limited by packet loss. A data rate
-of about 1 MB/s can be achieved. This is fast enough to keep a mirror of
+of about 0.1 MB/s can be achieved. This is fast enough to keep a mirror of
 OpenBSD with a selected subset of packages up to date in an internal
 network.
 
