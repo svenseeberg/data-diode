@@ -50,6 +50,7 @@ PKG_TYPE_END = 2
 # Transfer state
 FILES_TRANSFERRED = []
 FILES_FAILED = []
+TOTAL_TRANSFERRED = 0
 
 class ReceiveState:
     def __init__(self):
@@ -58,6 +59,7 @@ class ReceiveState:
         self.file_size = 0
         self.known_chunks = set()
         self.path_hash = None
+        self.prev_chunk = -1
 
     def add_kbytes(self, chunk_kbytes: int):
         """
@@ -101,27 +103,27 @@ class Display:
         """
         Send info to Arduino to update LCD
         """
+        data_mb = int(RECEIVE_STATE.kb_transferred / 1024)
+        progress = int(RECEIVE_STATE.kb_transferred / RECEIVE_STATE.file_size)
+        progress_str = " " + str(progress) + "%" if RECEIVE_STATE.file_path is not None else ""
         if RECEIVE_STATE.file_path is not None:
             state = "Rx   "
-            progress = int(progress)
         else:
             state = "Wait "
-        data_mb = int(RECEIVE_STATE.kb_transferred/1024)
-        line1 = state + str(len(FILES_TRANSFERRED))+"F " + str(len(FILES_FAILED))+"E"
-        line2 = str(data_mb) + "MB" + (" " + str(progress) + "%" if RECEIVE_STATE.file_path is not None else "")
+        line1 = state + str(len(FILES_TRANSFERRED)) + "F " + str(len(FILES_FAILED)) + "E"
+        line2 =  str(data_mb) + "MB" + progress_str
         self.arduino.write(bytes(line1+'\n', 'ascii'))
         self.arduino.write(bytes(line2+'\n', 'ascii'))
 
-def write_file_from_chunks(path: str, chunks: list) -> None:
+def write_chunk_to_file(path: str, chunk: bytes) -> None:
     """
-    Write validated chunks to file
+    Write validated chunk to file
     """
     full_path = os.path.join(OUTPUT_DIR, path)
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
     with open(full_path, 'ab') as f:
-        for chunk in chunks:
-            RECEIVE_STATE.add_kbytes(len(chunks))
-            f.write(chunk)
+        f.write(chunk)
+        RECEIVE_STATE.add_kbytes(len(chunk))
 
 def new_file(path: str, size: int, path_hash: str) -> None:
     """
@@ -158,8 +160,10 @@ def reset_transfer(success: bool = True) -> None:
     Reset global variables related to transfer state.
     """
     global RECEIVE_STATE
+    global TOTAL_TRANSFERRED
     if success:
         FILES_TRANSFERRED.append(RECEIVE_STATE.file_path)
+        TOTAL_TRANSFERRED = TOTAL_TRANSFERRED + RECEIVE_STATE.file_size
     else:
         FILES_FAILED.append(RECEIVE_STATE.file_path)
     RECEIVE_STATE = ReceiveState()
@@ -190,11 +194,19 @@ def chunk_is_valid(packet: dict, chunk_bytes: bytes) -> bool:
     """
     Check if chunk is valid
     """
-    return (
-        packet['p'] == RECEIVE_STATE.path_hash and
-        packet['c'] not in RECEIVE_STATE.known_chunks and
-        hashlib.md5(chunk_bytes).hexdigest() == packet['h']
-    )
+    result = True
+    if not packet['h'] != RECEIVE_STATE.path_hash:
+        DIODE_LOGGER.warning("Path does not match in %s", packet['c'])
+        result = False
+    if hashlib.md5(chunk_bytes).hexdigest() != packet['h']:
+        DIODE_LOGGER.warning("Hash does not match in %s", packet['c'])
+        result = False
+    if packet['c'] in RECEIVE_STATE.known_chunks:
+        result = False
+    elif packet['c'] != RECEIVE_STATE.prev_chunk + 1:
+        DIODE_LOGGER.error("Missed chunk %s", RECEIVE_STATE.prev_chunk)
+        result = False
+    return result
 
 def process_chunk(packet: dict) -> None:
     """
@@ -202,7 +214,8 @@ def process_chunk(packet: dict) -> None:
     """
     chunk_bytes = bytes.fromhex(packet['d'])
     if chunk_is_valid(packet, chunk_bytes):
-        write_file_from_chunks(RECEIVE_STATE.file_path, [chunk_bytes])
+        RECEIVE_STATE.prev_chunk = packet['c']
+        write_chunk_to_file(RECEIVE_STATE.file_path, chunk_bytes)
         RECEIVE_STATE.known_chunks.add(packet['c'])
         if DISPLAY is not None and packet['c'] % 1000 == 0:
             DISPLAY.update()
