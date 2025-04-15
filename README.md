@@ -40,11 +40,18 @@ In a previous version a Serial connection was used. Check out the
 [`v2.3`](https://github.com/svenseeberg/data-diode/releases/tag/v2.3)
 tag for the Serial version.
 
-## Speed
+## Speed and Error Rate
 The speed of the diode is mostly limited by packet loss. A data rate
-of about 0.1 MB/s can be achieved. This is fast enough to keep a mirror of
+of about 0.5 MB/s can be achieved. This is fast enough to keep a mirror of
 OpenBSD with a selected subset of packages up to date in an internal
 network.
+
+Depending on the configured speed, some packets are lost. To avoid having
+to re-transmit large files, which in turn is again error-prone, chunking
+large files before transmitting is possible with the `bin/split_files`
+script. The `bin/merge_files` script can re-assemble the original files
+on the receiving Pi. The scripts use `sha256` to validate the transferred
+files.
 
 ## Security
 There are some serious limitations to the concept of the diode and the
