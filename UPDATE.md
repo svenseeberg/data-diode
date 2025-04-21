@@ -24,11 +24,15 @@ To update OpenBSD on the diode, first update the sender:
 1. Download the tgz files for updating OpenBSD:
    ```sh
    BSD_VERSION=7.5
-   wget -nH -nc -r --no-parent https://cdn.openbsd.org/pub/OpenBSD/$BSD_VERSION/arm65/ -R "index.html*" --reject iso,img
+   wget -nH -nc -r --no-parent https://cdn.openbsd.org/pub/OpenBSD/$BSD_VERSION/arm64/ -R "index.html*" --reject iso,img
    ```
-1. Move files to diode directory:
+1. Split files larger than 10MB into chunks:
    ```sh
-   mv ./pub /var/www/diode
+   split_files pub/OpenBSD/$BSD_VERSION
+   ```
+1. Copy files to diode directory:
+   ```sh
+   cp -r pub/OpenBSD/$BSD_VERSION /var/www/diode/pub/OpenBSD/
    ```
 1. To download all required packages, including dependencies, for running the receiver program, edit the `/etc/openbsd-mirror.conf`:
    ```
@@ -52,14 +56,24 @@ To update OpenBSD on the diode, first update the sender:
    ```sh
    cp -rp /home/download/packages/pub /var/www/diode/
    ```
-1. Wait until all files are transferred.
-1. Clean file chunks on the receiver:
+1. Wait until all files are transferred. Re-transmit failed chunks/files if required.
+1. Merge files on the receiver:
    ```sh
    cd /var/www/diode
-   find . -name "*-part_*" -delete
+   merge_files /var/www/diode/pub/OpenBSD/7.5
    ```
 
 ## Set Up OpenBSD Mirror on Receiver
+
+To serve received files in the internal network, configure httpd:
+
+```
+server "default" {
+   listen on * port 80
+   directory auto index
+   root "/www"
+}
+```
 
 ## Upgrade Receiver
 1. First upgrade to the newest OpenBSD release:
@@ -72,5 +86,6 @@ To update OpenBSD on the diode, first update the sender:
    ```
 1. Check if the sender scripts works as expected:
    ```sh
-   rcctl check diode_send
+   rcctl start diode_receive
+   rcctl check diode_receive
    ```
