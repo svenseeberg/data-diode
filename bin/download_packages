@@ -17,7 +17,7 @@ PARSER = argparse.ArgumentParser(description='Mirror OpenBSD packages with depen
 PARSER.add_argument('--directory', type=str, nargs='?', required=False, default="./",
                     help='directory from which to send files')
 PARSER.add_argument('--config', type=str, nargs='?', required=False,
-                    default="{}/.openbsd-mirror.ini".format(str(Path.home())),
+                    default=f"{Path.home()}/.openbsd-mirror.ini",
                     help='Path to configuration file')
 
 
@@ -43,8 +43,10 @@ def download_package(arch, os_version, package_filename, stable):
     """
     target_path = package_path(stable, os_version, arch, package_filename)
     if not os.path.isfile(target_path):
-        url = "https://cdn.openbsd.org/pub/OpenBSD/{}/{}/{}/{}".format(
-            os_version, packages_dir(stable), arch, package_filename)
+        url = (
+            f"https://cdn.openbsd.org/pub/OpenBSD/{os_version}/"
+            f"{packages_dir(stable)}/{arch}/{package_filename}"
+        )
         print("Downloading " + url)
         urllib.request.urlretrieve(url, filename=target_path)
     return get_pkg_dependencies(target_path)
@@ -78,7 +80,7 @@ def write_config(config):
     """
     Write with updated version strings
     """
-    with open(ARGS.config, 'w') as configfile:
+    with open(ARGS.config, 'w', encoding="utf-8") as configfile:
         config.write(configfile)
 
 def get_pkg_list(arch, version, stable=False):
@@ -89,14 +91,14 @@ def get_pkg_list(arch, version, stable=False):
         stable = "-stable"
     else:
         stable = ""
-    url = "https://cdn.openbsd.org/pub/OpenBSD/{}/packages{}/{}/".format(version, stable, arch)
+    url = f"https://cdn.openbsd.org/pub/OpenBSD/{version}/packages{stable}/{arch}/"
     req = urllib.request.urlopen(url).read().decode('utf-8')
     lines = req.split("\n")
-    pkgs = []
+    pkgs = set()
     for line in lines:
         search = re.search(r"<a href=\"(.*\.tgz)\".*", line)
         if search:
-            pkgs.append(search.group(1))
+            pkgs.add(search.group(1))
     return pkgs
 
 # pylint: disable=too-many-arguments
@@ -106,6 +108,8 @@ def recursive_download(avl_pkgs, avl_pkgs_stbl, os_version, arch, pkg, cur_pkg_v
     """
     stable, pkg_filename = get_pkg_download_path(avl_pkgs, avl_pkgs_stbl, pkg,
                                                  cur_pkg_version)
+    if pkg_filename is None:
+        raise ValueError(f"Could not find file for package {pkg}")
     if cur_pkg_version is None:
         cur_pkg_version = get_pkg_version(pkg, pkg_filename)
     old_pkg_version = get_existing_version(arch, pkg)
@@ -114,14 +118,14 @@ def recursive_download(avl_pkgs, avl_pkgs_stbl, os_version, arch, pkg, cur_pkg_v
         for dep in dependencies:
             dep_version = recursive_download(avl_pkgs, avl_pkgs_stbl, os_version, arch,
                                              dep[0], dep[1])
-            CONFIG.set("{}/dependencies".format(arch), dep[0], dep_version)
+            CONFIG.set(f"{arch}/dependencies", dep[0], dep_version)
     return cur_pkg_version
 
 def get_existing_version(arch, pkg):
     """
     Get previously downloaded version of package
     """
-    dep_section = "{}/dependencies".format(arch)
+    dep_section = f"{arch}/dependencies"
     return CONFIG.get(arch, pkg, fallback=CONFIG.get(dep_section, pkg, fallback=None))
 
 def get_pkg_version(package, pkg_filename):
@@ -136,12 +140,13 @@ def get_pkg_download_path(avl_pkgs, avl_pkgs_stbl, package, version=None):
     """
     if version is not None:
         package = "-".join([package, version])
-    package = package.replace("+", r"\+")
+    package = package.replace("+", r"\+").rstrip("-").replace(".tgz", "")
+    regex = r"{}[0-9\.plv\-]*\.tgz$".format(package.lower())
     for stbl_pkg in avl_pkgs_stbl:
-        if re.match(r"{}[0-9\.plv\-]*\.tgz$".format(package), stbl_pkg):
+        if re.match(regex, stbl_pkg.lower()):
             return True, stbl_pkg
     for stbl_pkg in avl_pkgs:
-        if re.match(r"{}[0-9\.plv\-]*\.tgz$".format(package), stbl_pkg):
+        if re.match(regex, stbl_pkg.lower()):
             return False, stbl_pkg
     return None, None
 
@@ -151,11 +156,14 @@ def main():
     """
     os_version = CONFIG['OpenBSD']["version"]
     for arch in [s for s in CONFIG.sections() if s != "OpenBSD" and "/dependencies" not in s]:
-        dep_sec = "{}/dependencies".format(arch)
+        dep_sec = f"{arch}/dependencies"
         if dep_sec not in CONFIG.sections():
-            CONFIG.add_section("{}/dependencies".format(arch))
+            CONFIG.add_section(dep_sec)
         avl_pkgs = get_pkg_list(arch, os_version, stable=False)
-        avl_pkgs_stbl = get_pkg_list(arch, os_version, stable=True)
+        try:
+            avl_pkgs_stbl = get_pkg_list(arch, os_version, stable=True)
+        except urllib.error.HTTPError:
+            avl_pkgs_stbl = set()
         # Get new packages including dependencies
         for package in CONFIG[arch]:
             pkg_version = recursive_download(avl_pkgs, avl_pkgs_stbl, os_version, arch, package)
