@@ -117,7 +117,7 @@ class Display:
                 progress = 100
             else:
                 progress = int(RECEIVE_STATE.bytes_transferred / RECEIVE_STATE.file_size * 100)
-            progress_str = " " + str(progress) + "%"
+            progress_str = f" {progress:>3}%"
         else:
             state = "Wait "
             progress_str = "   "
