@@ -18,6 +18,6 @@ print -- "$FILES" | while IFS= read -r FILENAME; do
     esac
     sha256 -C "$1"/SHA256 "$FILENAME"
     if [ "$?" == 0 ]; then
-        rm "${FILENAME}_chunk_"*
+        rm -f "${FILENAME}_chunk_"*
     fi
 done
