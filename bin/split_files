@@ -2,12 +2,13 @@
 # Create checksums of original files, then split large source files in place and remove original
 
 FILES=$(find "$1" -type f)
-sha256 $FILES > $1/SHA256
+if [ ! -f /tmp/foo.txt ]; then
+    sha256 $FILES > $1/SHA256
+fi
 
 FILES=$(find "$1" -type f -size +10485760c)
 print -- "$FILES" | while IFS= read -r FILENAME; do
     targetdir=$(dirname "$FILENAME")
-    echo $targetdir
     split -b 10m "$FILENAME" "${targetdir}/${FILENAME##*/}_chunk_"
     rm "$FILENAME"
 done
