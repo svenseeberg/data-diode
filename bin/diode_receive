@@ -64,6 +64,7 @@ class ReceiveState:
         self.known_chunks = set()
         self.path_hash = None
         self.prev_chunk = -1
+        self.missed_chunks = set()
 
     def add_bytes(self, chunk_kbytes: int):
         """
@@ -213,7 +214,10 @@ def chunk_is_valid(packet: dict, chunk_bytes: bytes) -> bool:
     if packet['c'] in RECEIVE_STATE.known_chunks:
         result = False
     elif packet['c'] != RECEIVE_STATE.prev_chunk + 1:
-        DIODE_LOGGER.error("Missed chunk %s", RECEIVE_STATE.prev_chunk)
+        missed_chunk = RECEIVE_STATE.prev_chunk + 1
+        if missed_chunk not in RECEIVE_STATE.missed_chunks:
+            DIODE_LOGGER.error("Missed chunk %s", missed_chunk)
+            RECEIVE_STATE.missed_chunks.add(missed_chunk)
         result = False
     return result
 
