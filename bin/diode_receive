@@ -54,19 +54,24 @@ FILES_FAILED = []
 TOTAL_TRANSFERRED = 0
 
 class ReceiveState:
+    """
+    Track the progress of the current transfer
+    """
     def __init__(self):
-        self.kb_transferred = 0
+        self.bytes_transferred = 0
         self.file_path = None
         self.file_size = 0
         self.known_chunks = set()
         self.path_hash = None
         self.prev_chunk = -1
 
-    def add_kbytes(self, chunk_kbytes: int):
+    def add_bytes(self, chunk_kbytes: int):
         """
         Add transferred bytes
         """
-        self.kb_transferred = self.kb_transferred + chunk_kbytes
+        global TOTAL_TRANSFERRED
+        self.bytes_transferred += chunk_kbytes
+        TOTAL_TRANSFERRED += chunk_kbytes
 
     def new_transfer(self, file_path: str, path_hash: str, file_size: int):
         """
@@ -104,13 +109,17 @@ class Display:
         """
         Send info to Arduino to update LCD
         """
-        data_mb = int(RECEIVE_STATE.kb_transferred / 1024)
-        progress = int(RECEIVE_STATE.kb_transferred / RECEIVE_STATE.file_size)
-        progress_str = " " + str(progress) + "%" if RECEIVE_STATE.file_path is not None else ""
+        data_mb = round(TOTAL_TRANSFERRED / 1024 / 1024, 1)
         if RECEIVE_STATE.file_path is not None:
             state = "Rx   "
+            if not RECEIVE_STATE.file_size:
+                progress = 100
+            else:
+                progress = int(RECEIVE_STATE.bytes_transferred / RECEIVE_STATE.file_size * 100)
+            progress_str = " " + str(progress) + "%"
         else:
             state = "Wait "
+            progress_str = "   "
         line1 = state + str(len(FILES_TRANSFERRED)) + "F " + str(len(FILES_FAILED)) + "E"
         line2 =  str(data_mb) + "MB" + progress_str
         self.arduino.write(bytes(line1+'\n', 'ascii'))
@@ -124,7 +133,7 @@ def write_chunk_to_file(path: str, chunk: bytes) -> None:
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
     with open(full_path, 'ab') as f:
         f.write(chunk)
-        RECEIVE_STATE.add_kbytes(len(chunk))
+        RECEIVE_STATE.add_bytes(len(chunk))
 
 def new_file(path: str, size: int, path_hash: str) -> None:
     """
@@ -162,10 +171,8 @@ def reset_transfer(success: bool = True) -> None:
     Reset global variables related to transfer state.
     """
     global RECEIVE_STATE
-    global TOTAL_TRANSFERRED
     if success:
         FILES_TRANSFERRED.append(RECEIVE_STATE.file_path)
-        TOTAL_TRANSFERRED = TOTAL_TRANSFERRED + RECEIVE_STATE.file_size
     else:
         FILES_FAILED.append(RECEIVE_STATE.file_path)
     RECEIVE_STATE = ReceiveState()
