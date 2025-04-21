@@ -120,7 +120,7 @@ class Display:
             progress_str = f" {progress:>3}%"
         else:
             state = "Wait "
-            progress_str = "   "
+            progress_str = "     "
         line1 = state + str(len(FILES_TRANSFERRED)) + "F " + str(len(FILES_FAILED)) + "E"
         line2 =  str(data_mb) + "MB" + progress_str
         self.arduino.write(bytes(line1+'\n', 'ascii'))
