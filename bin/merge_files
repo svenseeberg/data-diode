@@ -1,0 +1,23 @@
+#!/bin/sh
+# Merge source files in place. Verify merged files and then delete chunks.
+
+FILES=$(find "$1" -type f -name '*_chunk_aa')
+
+print -- "$FILES" | while IFS= read -r CHUNKNAME; do
+    FILENAME=$(echo $CHUNKNAME | sed "s/_chunk_aa//")
+    echo "Merging $FILENAME"
+    cat "${FILENAME}_chunk_"* > "$FILENAME"
+done
+
+FILES=$(find "$1" -type f)
+print -- "$FILES" | while IFS= read -r FILENAME; do
+    case "$FILENAME" in
+        *_chunk_*) continue ;;
+        *SHA256) continue ;;
+        *SHA256.sig) continue ;;
+    esac
+    sha256 -C "$1"/SHA256 "$FILENAME"
+    if [ "$?" == 0 ]; then
+        rm "${FILENAME}_chunk_"*
+    fi
+done
