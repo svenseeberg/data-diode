@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import logging
+import math
 import os
 import socket
 import time
@@ -36,12 +37,13 @@ PARSER.add_argument('--directory', type=str, nargs='?', required=True,
 ARGS = PARSER.parse_args()
 
 
-CHUNK_SIZE = 512
+CHUNK_SIZE = 640
 TARGET_IP = ARGS.target_subnet
 TARGET_PORT = int(ARGS.target_port)
 SOURCE_DIR = ARGS.directory
-RATE_LIMIT_DELAY_CYCLES = 10000
-RESEND_PACKET = 1
+DELAY_NEXT_CHUNK = 4000
+BATCH_SIZE = 1000
+RESEND_PACKET = 3
 SCAN_INTERVAL = 1
 STABILITY_CHECK_DELAY = 1
 
@@ -52,23 +54,27 @@ PKG_TYPE_END = 2
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
-def busy_wait_sleep():
+def busy_wait_sleep(cycles: int = DELAY_NEXT_CHUNK):
     """
     time.sleep() is too slow (on OpenBSD). Looping through
     a range can introduce "arbitrarily" short delays. Can be
     replaced by any other function that can introduce delays in
     the range of microseconds.
     """
-    for n in range(0, RATE_LIMIT_DELAY_CYCLES):
+    for n in range(0, cycles):
         i = n
 
-def get_chunks(filepath: str):
+def get_chunks(filepath: str, batch):
     """
     Read file chunks
     """
     with open(filepath, 'rb') as f:
-        while chunk := f.read(CHUNK_SIZE):
-            yield chunk
+        f.seek(batch*CHUNK_SIZE)
+        for _ in range(BATCH_SIZE):
+            data = f.read(CHUNK_SIZE)
+            if not data:
+                break  # End of file
+            yield data
 
 def send_start_paket(filepath: str, rel_path: str, rel_path_hash: str) -> None:
     """
@@ -84,6 +90,7 @@ def send_start_paket(filepath: str, rel_path: str, rel_path_hash: str) -> None:
     }).encode()
     for n in range(0, RESEND_PACKET):  # pylint: disable=unused-variable
         sock.sendto(start_packet, (TARGET_IP, TARGET_PORT))
+        busy_wait_sleep(DELAY_NEXT_CHUNK)
 
 def send_end_paket(filepath: str, rel_path: str, count: int) -> None:
     """
@@ -92,6 +99,7 @@ def send_end_paket(filepath: str, rel_path: str, count: int) -> None:
     end_packet = json.dumps({"p":rel_path, 't': PKG_TYPE_END, 'c': count}).encode()
     for n in range(0, RESEND_PACKET):  # pylint: disable=unused-variable
         sock.sendto(end_packet, (TARGET_IP, TARGET_PORT))
+        busy_wait_sleep(DELAY_NEXT_CHUNK)
     os.remove(filepath)
     DIODE_LOGGER.info("Finished sending file: %s", rel_path)
 
@@ -108,9 +116,16 @@ def send_data_paket(rel_path_hash: str, chunk: bytes, count: int) -> None:
         't': PKG_TYPE_DATA,
     }
     data = json.dumps(packet).encode()
-    for n in range(0, RESEND_PACKET):  # pylint: disable=unused-variable
-        sock.sendto(data, (TARGET_IP, TARGET_PORT))
-        busy_wait_sleep()
+    sock.sendto(data, (TARGET_IP, TARGET_PORT))
+    busy_wait_sleep(DELAY_NEXT_CHUNK)
+
+def calculate_number_of_batches(filepath):
+    """
+    Calculate the number of batches. We want to send BATCH_SIZE packets
+    in one batch.
+    """
+    filesize = os.path.getsize(filepath)
+    return math.ceil(filesize/CHUNK_SIZE/BATCH_SIZE)
 
 def send_file_chunks(filepath: str, rel_path: str) -> None:
     """
@@ -120,11 +135,18 @@ def send_file_chunks(filepath: str, rel_path: str) -> None:
     :param rel_path: relative path to file in relation to watched dir
     """
     rel_path_hash = hashlib.md5(rel_path.encode("utf-8")).hexdigest()
+    num_batches = calculate_number_of_batches(filepath)
     send_start_paket(filepath, rel_path, rel_path_hash)
     count = 0
-    for chunk in get_chunks(filepath):
-        send_data_paket(rel_path_hash, chunk, count)
-        count += 1
+    batch_start_count = 0
+    for batch in range(0, num_batches):
+        batch_start_count = count
+        for resend in range(0, RESEND_PACKET):
+            for chunk in get_chunks(filepath, batch):
+                send_data_paket(rel_path_hash, chunk, count)
+                count += 1
+            if resend < RESEND_PACKET - 1:
+                count = batch_start_count
     send_end_paket(filepath, rel_path, count)
 
 def is_file_stable(filepath: str, delay: int = STABILITY_CHECK_DELAY) -> bool:
