@@ -36,13 +36,13 @@ PARSER.add_argument('--directory', type=str, nargs='?', required=True,
 ARGS = PARSER.parse_args()
 
 
-CHUNK_SIZE = 512
+CHUNK_SIZE = 640
 TARGET_IP = ARGS.target_subnet
 TARGET_PORT = int(ARGS.target_port)
 SOURCE_DIR = ARGS.directory
 DELAY_RESEND = 5000
-DELAY_NEXT_CHUNK = 10000
-RESEND_PACKET = 3
+DELAY_NEXT_CHUNK = 5000
+RESEND_PACKET = 2
 SCAN_INTERVAL = 1
 STABILITY_CHECK_DELAY = 1
 
