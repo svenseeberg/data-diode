@@ -11,6 +11,7 @@ import logging
 import os
 import socket
 import sys
+import traceback
 
 from pathlib import Path
 from logging import handlers
@@ -65,6 +66,7 @@ class ReceiveState:
         self.path_hash = None
         self.prev_chunk = -1
         self.missed_chunks = set()
+        self.buffer = {}
 
     def add_bytes(self, chunk_kbytes: int):
         """
@@ -81,6 +83,29 @@ class ReceiveState:
         self.file_path = file_path
         self.path_hash = path_hash
         self.file_size = file_size
+
+    def buffer_packet(self, packet: dict):
+        """
+        Buffer packets
+        """
+        if len(self.buffer) > 10:
+            raise ValueError("Buffer too long, missed packet")
+        DIODE_LOGGER.debug("Storing packet %i", packet['c'])
+        self.buffer[packet['c']] = packet
+
+    def get_buffered_packets(self):
+        """
+        Get currently buffered packets as long as no packet is missing.
+        """
+        packets = sorted(self.buffer.items())
+        prev_chunk = self.prev_chunk
+        for count, packet in packets:
+            if count == prev_chunk + 1:
+                prev_chunk += 1
+                del self.buffer[count]
+                yield packet
+            else:
+                break
 
 RECEIVE_STATE = ReceiveState()
 
@@ -201,9 +226,10 @@ def listen() -> None:
                 raise ValueError("Unknown packet type")
         except Exception as e:  # pylint: disable=broad-exception-caught
             DIODE_LOGGER.error(e)
+            print(traceback.format_exc())
             reset_transfer(success=False)
 
-def chunk_is_valid(packet: dict, chunk_bytes: bytes) -> bool:
+def is_chunk_valid(packet: dict, chunk_bytes: bytes) -> bool:
     """
     Check if chunk is valid
     """
@@ -216,12 +242,6 @@ def chunk_is_valid(packet: dict, chunk_bytes: bytes) -> bool:
         result = False
     if packet['c'] in RECEIVE_STATE.known_chunks:
         result = False
-    elif packet['c'] != RECEIVE_STATE.prev_chunk + 1:
-        missed_chunk = RECEIVE_STATE.prev_chunk + 1
-        if missed_chunk not in RECEIVE_STATE.missed_chunks:
-            DIODE_LOGGER.error("Missed chunk %s", missed_chunk)
-            RECEIVE_STATE.missed_chunks.add(missed_chunk)
-        result = False
     return result
 
 def process_chunk(packet: dict) -> None:
@@ -229,12 +249,14 @@ def process_chunk(packet: dict) -> None:
     Process data paket
     """
     chunk_bytes = bytes.fromhex(packet['d'])
-    if chunk_is_valid(packet, chunk_bytes):
-        RECEIVE_STATE.prev_chunk = packet['c']
-        write_chunk_to_file(RECEIVE_STATE.file_path, chunk_bytes)
-        RECEIVE_STATE.known_chunks.add(packet['c'])
-        if DISPLAY is not None and packet['c'] % 1000 == 0:
-            DISPLAY.update()
+    if is_chunk_valid(packet, chunk_bytes):
+        RECEIVE_STATE.buffer_packet(packet)
+        for buffered_packet in RECEIVE_STATE.get_buffered_packets():
+            write_chunk_to_file(RECEIVE_STATE.file_path, chunk_bytes)
+            RECEIVE_STATE.known_chunks.add(buffered_packet['c'])
+            if DISPLAY is not None and buffered_packet['c'] % 1000 == 0:
+                DISPLAY.update()
+            RECEIVE_STATE.prev_chunk = buffered_packet['c']
 
 DISPLAY = Display(ARGS.arduino) if ARGS.arduino else None
 
