@@ -178,21 +178,44 @@ def new_file(path: str, size: int, path_hash: str) -> None:
     if DISPLAY is not None:
         DISPLAY.update()
 
+def is_file_valid(packet: dict) -> bool:
+    """
+    Check if the final file is in the expected state.
+    """
+    success = True
+    filesize = os.path.getsize(os.path.join(OUTPUT_DIR, RECEIVE_STATE.file_path))
+    if  len(RECEIVE_STATE.known_chunks) != packet['c']:
+        DIODE_LOGGER.error(
+            "Missing chunks for %s. Received %s but expected %s.",
+            packet['p'],
+            len(RECEIVE_STATE.known_chunks),
+            packet['c']
+        )
+        success = False
+    if RECEIVE_STATE.file_size != filesize:
+        DIODE_LOGGER.error(
+            "Filesize mismatch for %s. Expected %i but wrote %i bytes.",
+            packet['p'],
+            RECEIVE_STATE.file_size,
+            filesize
+        )
+        success = False
+    return success
+
 def finish_file(packet: dict) -> None:
     """
     Validate that file has been completed and append to finished files
     """
     failed_path = os.path.join(OUTPUT_DIR, f"{RECEIVE_STATE.file_path}.failed")
-    if RECEIVE_STATE.file_path is not None and len(RECEIVE_STATE.known_chunks) != packet['c']:
-        DIODE_LOGGER.error("Missing chunks for %s", packet['p'])
-        os.remove(os.path.join(OUTPUT_DIR, RECEIVE_STATE.file_path))
-        Path(failed_path).touch()
-        reset_transfer(success=False)
-    elif RECEIVE_STATE.file_path is not None:
+    if is_file_valid(packet):
         DIODE_LOGGER.info("Finished receiving %s", packet['p'])
         if os.path.exists(failed_path):
             os.remove(failed_path)
         reset_transfer(success=True)
+    else:
+        os.remove(os.path.join(OUTPUT_DIR, RECEIVE_STATE.file_path))
+        Path(failed_path).touch()
+        reset_transfer(success=False)
 
 def reset_transfer(success: bool = True) -> None:
     """

@@ -69,11 +69,11 @@ def get_chunks(filepath: str, batch):
     Read file chunks
     """
     with open(filepath, 'rb') as f:
-        f.seek(batch*CHUNK_SIZE)
+        f.seek(batch*CHUNK_SIZE*BATCH_SIZE)
         for _ in range(BATCH_SIZE):
             data = f.read(CHUNK_SIZE)
             if not data:
-                break  # End of file
+                break
             yield data
 
 def send_start_paket(filepath: str, rel_path: str, rel_path_hash: str) -> None:
@@ -125,7 +125,8 @@ def calculate_number_of_batches(filepath):
     in one batch.
     """
     filesize = os.path.getsize(filepath)
-    return math.ceil(filesize/CHUNK_SIZE/BATCH_SIZE)
+    num_chunks = math.ceil(filesize/CHUNK_SIZE)
+    return math.ceil(num_chunks/BATCH_SIZE)
 
 def send_file_chunks(filepath: str, rel_path: str) -> None:
     """
@@ -143,8 +144,9 @@ def send_file_chunks(filepath: str, rel_path: str) -> None:
         batch_start_count = count
         for resend in range(0, RESEND_PACKET):
             for chunk in get_chunks(filepath, batch):
-                send_data_paket(rel_path_hash, chunk, count)
-                count += 1
+                if chunk:
+                    send_data_paket(rel_path_hash, chunk, count)
+                    count += 1
             if resend < RESEND_PACKET - 1:
                 count = batch_start_count
     send_end_paket(filepath, rel_path, count)
