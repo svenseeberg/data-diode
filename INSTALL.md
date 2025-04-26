@@ -1,14 +1,17 @@
 # Setting up OpenBSD on Raspberry Pi 4B
-## Prepare SD card and install USB drive
+## Prepare USB drive with OpenBSD installer
 1. Got to the [download](https://www.openbsd.org/faq/faq4.html#Download) page and retrieve install installXX.img for arm64.
 1. Flash the install firmware to a USB drive:
    ```
    sudo dd if=/home/user/Downloads/installXX.img of=/dev/sdb
    ```
+## Prepare SD card with UEFI firmware
 1. Download a current version of the [Raspberry Pi 4 UEFI Firmware](https://github.com/pftf/RPi4/tags), then unzip the files:
    ```
    mkdir /tmp/rpi-firmware
-   unzip Downloads/vXXX.zip -d /tmp/rpi-firmware
+   cd /tmp/rpi-firmware
+   wget https://github.com/pftf/RPi4/releases/download/v1.41/RPi4_UEFI_Firmware_v1.41.zip
+   unzip RPi4_UEFI_Firmware_v1.41.zip
    ```
 1. Create a boot partition with at least 20 MB, for example with `parted`:
    ```
@@ -24,7 +27,7 @@
 1. Mount the first partition of the SD card and copy the UEFI firmware:
    ```
    sudo mount /dev/mmcblk0p1 /mnt
-   sudo cp /tmp/rpi-firmware/* /mnt/
+   sudo cp /tmp/rpi-firmware/RPi4_UEFI_Firmware_v1.41/* /mnt/
    ```
 1. Edit the `/mnt/config.txt` and disable the WIFI and Bluetooth adapters by adding the following lines:
    ```
@@ -35,7 +38,9 @@
    ```
    sudo umount /mnt/
    ```
-1. Plug the SD card and USB drive into the RPi.
+1. Plug the SD card and USB drive into the RPi and power up.
+1. Use the ESC key to open the UEFI Firmware and use the Boot Manager to boot the installer from the USB drive.
+1. Install OpenBSD.
 
 # Hardware setup
 1. Attach one USB Ethernet adapters to each Raspberry Pi. Use the (blue) USB 3 ports.
