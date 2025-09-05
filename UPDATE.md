@@ -1,10 +1,12 @@
 # Updating OpenBSD
 
-Updating OpenBSD can break the diode if the installed Python3 packages are not updated along with the main release.
+This document describes how to maintain OpenBSD on the diode Raspberry Pis (and other OpenBSD machines in the internal network).
+
+Warning: Updating OpenBSD can break the diode if the installed Python3 packages are not updated along with the main release.
 
 ## Upgrade Sender
 
-To update OpenBSD on the diode, first update the sender:
+To update OpenBSD on the diode, first update the sender. This allows updating all packages while being connected to the internet and problems can be dealt with much easier.
 
 1. First upgrade to the newest OpenBSD release:
    ```sh
@@ -19,14 +21,17 @@ To update OpenBSD on the diode, first update the sender:
    rcctl check diode_send
    ```
 
+
 ## Transfer Files through Diode
+
+When the upgrade of ther sender works as expected, all required files can be transmitted through the diode. When the transfer is completed, the receive can be updated as well.
 
 1. Download the tgz files for updating OpenBSD:
    ```sh
    BSD_VERSION=7.5
    wget -nH -nc -r --no-parent https://cdn.openbsd.org/pub/OpenBSD/$BSD_VERSION/arm64/ -R "index.html*" --reject iso,img
    ```
-1. Split files larger than 10MB into chunks:
+1. Optional: split files larger than 10MB into chunks:
    ```sh
    split_files pub/OpenBSD/$BSD_VERSION
    ```
@@ -62,6 +67,7 @@ To update OpenBSD on the diode, first update the sender:
    cd /var/www/diode
    merge_files /var/www/diode/pub/OpenBSD/7.5
    ```
+
 
 ## Set Up OpenBSD Mirror on Receiver
 
