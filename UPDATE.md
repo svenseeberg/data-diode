@@ -71,7 +71,8 @@ When the upgrade of ther sender works as expected, all required files can be tra
 
 To use this procedure, you first need to set up the receiver Pi as an HTTP mirror, see [INSTALL.md](INSTALL.md).
 
-1. First upgrade to the newest OpenBSD release:
+1. Validate that the Python3 package with all its dependencies are transferred before starting the upgrade. If the old Python3 version breaks after the upgrade, you cannot transfer any addtional files through the diode.
+1. Upgrade to the newest OpenBSD release:
    ```sh
    sysupgrade
    ```
