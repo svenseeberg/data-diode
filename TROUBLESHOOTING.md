@@ -4,7 +4,7 @@
 
 Problem: After switching to a new major release, for example 7.6 to 7.7, the `download_packages` tool fails to resolve some dependencies.
 
-Solution: Remove the full `[amd64/dependencies]` section from the config file.
+Solution: Remove the full `[amd64/dependencies]` section from the config file and set the version for each package to `*`.
 
 ## Network Device Inactive
 
