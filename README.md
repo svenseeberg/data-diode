@@ -68,7 +68,7 @@ instructions about updating the OpenBSD release, read
 [UPDATE.md](UPDATE.md). The UPDATE.md also documents how to set up and
 maintain/sync an OpenBSD mirror in the internal network.
 
-Compatible OpenBSD versions: 7.2 to 7.6
+Compatible OpenBSD versions: 7.2 to 7.7
 
 ## Required Hardware
 * 2x Raspberry Pi 4B

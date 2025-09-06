@@ -108,3 +108,19 @@ Clone this repo or download the latest .zip file and extract. Then `cd` into the
    rcctl enable diode_send
    rcctl start diode_send
    ```
+
+## Set Up OpenBSD Mirror on Receiver
+
+To serve received files in the internal network via HTTP, edit the `/etc/httpd.conf`:
+
+```
+chroot /home/diode/
+
+server "default" {
+   listen on * port 80
+   directory auto index
+   root "/www"
+}
+```
+
+Now, if you copy files into the `/home/diode/send/www` directory on the sender, the files will be available via HTTP in the internal network. Check the [UPDATE.md](UPDATE.md) file to see how this can be used to distribute OpenBSD updates and packages.

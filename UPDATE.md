@@ -68,19 +68,6 @@ When the upgrade of ther sender works as expected, all required files can be tra
    merge_files /var/www/diode/pub/OpenBSD/7.5
    ```
 
-
-## Set Up OpenBSD Mirror on Receiver
-
-To serve received files in the internal network, configure httpd:
-
-```
-server "default" {
-   listen on * port 80
-   directory auto index
-   root "/www"
-}
-```
-
 ## Upgrade Receiver
 1. First upgrade to the newest OpenBSD release:
    ```sh
