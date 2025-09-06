@@ -1,7 +1,8 @@
 #!/bin/ksh
 
 daemon="/usr/local/bin/diode_receive"
-daemon_flags="--directory /var/www/diode --arduino /dev/cuaU1"
+daemon_flags="--directory /home/diode/receive --arduino /dev/cuaU0"
+daemon_user="diode"
 
 . /etc/rc.d/rc.subr
 

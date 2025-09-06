@@ -62,11 +62,17 @@
 
 # Diode setup
 Clone this repo or download the latest .zip file and extract. Then `cd` into the directory.
+
 ## Receiver setup
 1. Install Python3.
+1. Create a user `diode`.
 1. Copy the rc.d file:
    ```
    cp ./etc/rc.d/diode_receive /etc/rc.d/
+   ```
+1. Optional: if you're using an Arduino with display, allow the `diode` user to write to the serial port:
+   ```sh
+   usermod -G dialer diode
    ```
 1. Edit the device paths in `/etc/rc.d/diode_receive`. If you do not have an Arduino with LCD display connected, remove the `--arduino` parameter.
 1. Create the directory to which the received files are written.
@@ -81,12 +87,17 @@ Clone this repo or download the latest .zip file and extract. Then `cd` into the
    ```
 
 ## Sender setup
-1. Install Python3
+1. Install Python3.
+1. Create a user `diode`:
+   ```sh
+   adduser diode
+   ```
 1. Copy the rc.d file:
    ```
    cp ./etc/rc.d/diode_send /etc/rc.d/
    ```
 1. Edit the device paths in `/etc/rc.d/diode_send`.
+1. Optional: if you're not using an Arduino, remove the `--arduino` argument in the `/etc/rc.d/diode_`
 1. Create the directory from wich the files are read.
 1. Copy the main program:
    ```
@@ -97,6 +108,3 @@ Clone this repo or download the latest .zip file and extract. Then `cd` into the
    rcctl enable diode_send
    rcctl start diode_send
    ```
-
-## Adjust transfer speeds
-Transfer some files. If not all they are not appearing on the receiver, there were transmission errors. Reduce the bit rate in the rc.d scripts until you have no transmission errors. Alternatively, improve your hardware setup.
