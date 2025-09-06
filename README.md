@@ -1,8 +1,10 @@
 ## About
-This project contains the source code for a DIY data diode. It uses
-Raspberry Pis to unidirectionally transmit files via UDP through a
-single fiber optics cable without a back channel. An Arduino can be
-used to monitor the traffic and show the status on a 1602 LCD.
+This project is a OpenBSD and Python based
+[data diode](https://en.wikipedia.org/wiki/Unidirectional_network)
+intended to be deployed on two Raspberry Pis. It transmits files
+via UDP through a fiber optics cable without a back channel. An
+Arduino can be used to monitor the traffic and show the status on
+a 1602 LCD.
 
 ![Finished Diode](images/case.jpg)
 
@@ -15,21 +17,20 @@ through the diode. They can then be served from a webserver in the
 internal network.
 
 Version 3 of this build is based on
-[Vrolijk/OSDD](https://github.com/Vrolijk/OSDD).
-
-I recommend to also look into 
-[wavestone-cdt/dyode](https://github.com/wavestone-cdt/dyode),
+[Vrolijk/OSDD](https://github.com/Vrolijk/OSDD). I recommend to also
+look into [wavestone-cdt/dyode](https://github.com/wavestone-cdt/dyode),
 which is a very similar project.
 
 ## How it works
 The sending Raspberry Pi continuously checks a directory for new files.
 Files can be dropped into this directory with any protocol. If a new
-file is detected, it will be split into chunks, which will then be
-transferred through the unidirectional fiber cable. In the end, a hash
-sum is transferred as well. If the hash of the transferred data matches
-the sent hash, the received file will be stored in a target directory of
-the receiving Raspberry Pi, ready for pick up. If the hashes do not
-match, the error counter on the display increases by one.
+file is detected, it will transferred through the unidirectional fiber
+cable. In the end, a hash sum is transferred as well. If the hash of the
+transferred data matches the sent hash, the received file will be stored
+in a target directory of the receiving Raspberry Pi, ready for pick up.
+If the hashes do not match, the error counter on the display increases
+by one. Additionally, an empty file with the same filename and the ending
+`.failed` will be created.
 
 The display shows the status of the diode (idle/transfer in progress),
 the total number of files transferred, the number of errors that

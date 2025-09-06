@@ -19,6 +19,8 @@ PARSER.add_argument('--directory', type=str, nargs='?', required=False, default=
 PARSER.add_argument('--config', type=str, nargs='?', required=False,
                     default=f"{Path.home()}/.openbsd-mirror.ini",
                     help='Path to configuration file')
+PARSER.add_argument('-w', '--write', action='store_true',
+                    help='Pin downloaded versions in conf file.')
 
 
 def package_path(stable, os_version, arch, package_filename):
@@ -174,6 +176,8 @@ def main():
             pkg_version = recursive_download(avl_pkgs, avl_pkgs_stbl, os_version,
                                              arch, package, version)
             CONFIG.set(dep_sec, package, pkg_version)
+    if ARGS.write:
+        write_config(CONFIG)
 
 ARGS = PARSER.parse_args()
 CONFIG = read_config()
