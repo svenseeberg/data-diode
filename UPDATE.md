@@ -66,12 +66,17 @@ When the upgrade of ther sender works as expected, all required files can be tra
    ```sh
    merge_files /home/diode/receive/www/pub/OpenBSD/7.5
    ```
+1. To 
+You can similarly transfer/update syspatch and firmware files.
 
 ## Upgrade Receiver
 
 To use this procedure, you first need to set up the receiver Pi as an HTTP mirror, see [INSTALL.md](INSTALL.md).
 
-1. Validate that the Python3 package with all its dependencies are transferred before starting the upgrade. If the old Python3 version breaks after the upgrade, you cannot transfer any addtional files through the diode.
+1. Warning: If the old Python3 version segfaults on the new OpenBSD version, you cannot transfer any addtional files through the diode.
+
+   Validate that the Python3 package with all its dependencies are transferred before starting the upgrade.To see which packages are required, compare the output of `pkg_info` on the sender with the list of packages in the `pub/OpenBSD/$VERSION/packages/aarch64/` directory on the sender.
+
 1. Upgrade to the newest OpenBSD release:
    ```sh
    sysupgrade
@@ -85,3 +90,5 @@ To use this procedure, you first need to set up the receiver Pi as an HTTP mirro
    rcctl start diode_receive
    rcctl check diode_receive
    ```
+
+To upgrade the firmware, manually run `fw_update -p http://10.0.0.1/firmware` (change IP and firmware path if required).
