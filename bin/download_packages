@@ -179,4 +179,3 @@ ARGS = PARSER.parse_args()
 CONFIG = read_config()
 if __name__ == '__main__':
     main()
-write_config(CONFIG)
