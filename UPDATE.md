@@ -37,7 +37,7 @@ When the upgrade of ther sender works as expected, all required files can be tra
    ```
 1. Copy files to diode directory:
    ```sh
-   cp -r pub/OpenBSD/$BSD_VERSION /var/www/diode/pub/OpenBSD/
+   cp -r pub/OpenBSD/$BSD_VERSION /home/diode/send/www/pub/OpenBSD/
    ```
 1. To download all required packages, including dependencies, for running the receiver program, edit the `/etc/openbsd-mirror.conf`:
    ```
@@ -59,16 +59,18 @@ When the upgrade of ther sender works as expected, all required files can be tra
    ```
 1. Move or copy the downloaded packages to the diode directory:
    ```sh
-   cp -rp /home/download/packages/pub /var/www/diode/
+   cp -rp /home/download/packages/pub /home/diode/send/www
    ```
 1. Wait until all files are transferred. Re-transmit failed chunks/files if required.
-1. Merge files on the receiver:
+1. Optional: If you split files, merge files on the receiver:
    ```sh
-   cd /var/www/diode
-   merge_files /var/www/diode/pub/OpenBSD/7.5
+   merge_files /home/diode/receive/www/pub/OpenBSD/7.5
    ```
 
 ## Upgrade Receiver
+
+To use this procedure, you first need to set up the receiver Pi as an HTTP mirror, see [INSTALL.md](INSTALL.md).
+
 1. First upgrade to the newest OpenBSD release:
    ```sh
    sysupgrade

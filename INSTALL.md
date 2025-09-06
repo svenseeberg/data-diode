@@ -111,16 +111,31 @@ Clone this repo or download the latest .zip file and extract. Then `cd` into the
 
 ## Set Up OpenBSD Mirror on Receiver
 
-To serve received files in the internal network via HTTP, edit the `/etc/httpd.conf`:
+1. To serve received files in the internal network via HTTP, edit the `/etc/httpd.conf` on your receiver Pi:
 
-```
-chroot /home/diode/
+   ```
+   chroot /home/diode/receive
 
-server "default" {
-   listen on * port 80
-   directory auto index
-   root "/www"
-}
-```
+   server "default" {
+       listen on * port 80
+       directory auto index
+       root "/www"
+   }
+   ```
 
-Now, if you copy files into the `/home/diode/send/www` directory on the sender, the files will be available via HTTP in the internal network. Check the [UPDATE.md](UPDATE.md) file to see how this can be used to distribute OpenBSD updates and packages.
+1. Start the daemon:
+
+   ```sh
+   rcctl start httpd
+   rcctl enable httpd
+   ```
+
+   Now, if you copy files into the `/home/diode/send/www` directory on the sender, the files will be available via HTTP in the internal network.
+
+1. You can now edit the `/etc/installurl` file on all your machines in the internal network and set the path to the IP adress of your receiver Pi:
+
+   ```
+   http://10.0.0.1/pub/OpenBSD
+   ```
+
+The [UPDATE.md](UPDATE.md) describes how to download and transfer the necessary files for updating the base system and packages.
