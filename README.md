@@ -43,14 +43,14 @@ tag for the Serial version.
 
 ## Speed and Error Rate
 The speed of the diode is mostly limited by packet loss. A data rate
-of about 0.5 MB/s can be achieved. This is fast enough to keep a mirror of
+of about 0.7 MB/s can be achieved. This is fast enough to keep a mirror of
 OpenBSD with a selected subset of packages up to date in an internal
 network.
 
 Depending on the configured speed, some packets are lost. If a packet loss
 occured in my tests, then usually dozens packets at a time. To mitigate
-this problem, data chunks are sent in batches of 1000. These batches are
-then resent twice.
+this problem, data chunks are sent in batches of 100. These batches are
+then resent once.
 
 To avoid having to re-transmit large files, which in turn is again
 error-prone, chunking large files before transmitting is
