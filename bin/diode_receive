@@ -11,6 +11,7 @@ import os
 import queue
 import socket
 import sys
+import time
 import threading
 import traceback
 
@@ -38,6 +39,10 @@ PARSER.add_argument('--directory', type=str, nargs='?', required=True,
                     help='directory from which to send files')
 PARSER.add_argument('--arduino', type=str, nargs='?', required=False,
                     help='serial device, i.e. /dev/cuaU1')
+PARSER.add_argument('--udp-target-port', type=int, nargs='?', required=False,
+                    help='Target port for UDP packet forwarding. This enables forwarding of UDP packets.')
+PARSER.add_argument('--udp-target-ip', type=str, nargs='?', required=False, default="127.0.0.1",
+                    help='Target ip for UDP packet forwarding.')
 ARGS = PARSER.parse_args()
 
 # System setup based on arguments
@@ -49,13 +54,14 @@ OUTPUT_DIR = ARGS.directory
 PKG_TYPE_START = 0
 PKG_TYPE_DATA = 1
 PKG_TYPE_END = 2
-
+PKG_TYPE_UDP = 4
 # Transfer state
 FILES_TRANSFERRED = []
 FILES_FAILED = []
 TOTAL_TRANSFERRED = 0
 
 SOCKET_PKG_QUEUE = queue.Queue()
+FORWARD_UDP_QUEUE = queue.Queue()
 
 class ReceiveState:
     """
@@ -246,6 +252,8 @@ def worker() -> None:
                 new_file(packet["data"], packet["count"], packet["path_hash"])
             elif packet["type"] == PKG_TYPE_END and RECEIVE_STATE.file_path:
                 finish_file(packet)
+            elif packet["type"] == PKG_TYPE_UDP and ARGS.udp_target_port:
+                FORWARD_UDP_QUEUE.put(bytes.fromhex(packet['data']))
             elif RECEIVE_STATE.file_path:
                 raise ValueError("Unknown packet type")
         except Exception as e:  # pylint: disable=broad-exception-caught
@@ -318,6 +326,19 @@ def process_chunk(packet: dict) -> None:
         if DISPLAY is not None and buffered_packet['count'] % 1000 == 0:
             DISPLAY.update()
 
+def forward_udp_packets():
+    """
+    Forward the content of a UDP packet through the diode.
+    """
+    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    DIODE_LOGGER.info("Forwarding UDP packets to %s:%i", ARGS.udp_target_ip, ARGS.udp_target_port)
+    while True:
+        if FORWARD_UDP_QUEUE.empty():
+            time.sleep(0.01)
+        else:
+            data_packet = FORWARD_UDP_QUEUE.get()
+            udp_sock.sendto(data_packet, (ARGS.udp_target_ip, ARGS.udp_target_port))
+
 RECEIVE_STATE = ReceiveState()
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -331,4 +352,5 @@ if __name__ == "__main__":
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     threading.Thread(target=listen).start()
     threading.Thread(target=worker).start()
-
+    if ARGS.udp_target_port:
+        threading.Thread(target=forward_udp_packets).start()

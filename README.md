@@ -37,6 +37,11 @@ the total number of files transferred, the number of errors that
 occured, the total amount of transferred KB, and the progress
 (percentage) of the current file transfer.
 
+In addition to transferring files, the sender can be configured to
+listen for incoming UDP packets on a specified port. The receiver
+can be configured to forward these UDP packets to a specified IP
+address and port in the internal network.
+
 In a previous version a Serial connection was used. Check out the 
 [`v2.3`](https://github.com/svenseeberg/data-diode/releases/tag/v2.3)
 tag for the Serial version.
