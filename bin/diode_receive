@@ -8,8 +8,10 @@ import argparse
 import hashlib
 import logging
 import os
+import queue
 import socket
 import sys
+import threading
 import traceback
 
 from pathlib import Path
@@ -52,6 +54,8 @@ PKG_TYPE_END = 2
 FILES_TRANSFERRED = []
 FILES_FAILED = []
 TOTAL_TRANSFERRED = 0
+
+SOCKET_PKG_QUEUE = queue.Queue()
 
 class ReceiveState:
     """
@@ -186,7 +190,7 @@ def is_file_valid(packet: dict) -> bool:
     if len(RECEIVE_STATE.known_chunks) != packet['count']:
         DIODE_LOGGER.error(
             "Missing chunks for %s. Received %s but expected %s.",
-            packet['p'],
+            packet['data'],
             len(RECEIVE_STATE.known_chunks),
             packet['count']
         )
@@ -194,7 +198,7 @@ def is_file_valid(packet: dict) -> bool:
     if RECEIVE_STATE.file_size != filesize:
         DIODE_LOGGER.error(
             "Filesize mismatch for %s. Expected %i but wrote %i bytes.",
-            packet['p'],
+            packet['data'],
             RECEIVE_STATE.file_size,
             filesize
         )
@@ -229,14 +233,13 @@ def reset_transfer(success: bool = True) -> None:
     if DISPLAY is not None:
         DISPLAY.update()
 
-def listen() -> None:
+def worker() -> None:
     """
     Listen for incoming UDP packets, validate & write chunks
     """
     while True:
         try:
-            data, _ = sock.recvfrom(4096)
-            packet = decode_package(data)
+            packet = decode_package(SOCKET_PKG_QUEUE.get())
             if packet["type"] == PKG_TYPE_DATA and RECEIVE_STATE.file_path:
                 process_chunk(packet)
             elif packet["type"] == PKG_TYPE_START:
@@ -249,6 +252,14 @@ def listen() -> None:
             DIODE_LOGGER.error(e)
             print(traceback.format_exc())
             reset_transfer(success=False)
+
+def listen() -> None:
+    """
+    Fetch packages from socket queue and throw into worker threading queue
+    """
+    while True:
+        data, _ = sock.recvfrom(4096)
+        SOCKET_PKG_QUEUE.put(data)
 
 def is_chunk_valid(packet: dict) -> bool:
     """
@@ -318,4 +329,6 @@ DISPLAY = Display(ARGS.arduino) if ARGS.arduino else None
 
 if __name__ == "__main__":
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    listen()
+    threading.Thread(target=listen).start()
+    threading.Thread(target=worker).start()
+
