@@ -8,7 +8,6 @@ import hashlib
 import logging
 import math
 import os
-import queue
 import socket
 import time
 import threading
@@ -49,7 +48,7 @@ SOURCE_DIR = ARGS.directory
 DELAY_NEXT_CHUNK = 2000
 BATCH_SIZE = 100
 RESEND_PACKET = 2
-SCAN_INTERVAL = 0.1
+SCAN_INTERVAL = 2
 STABILITY_CHECK_DELAY = 1
 
 PKG_TYPE_START = 0
@@ -58,8 +57,6 @@ PKG_TYPE_END = 2
 PKG_TYPE_UDP = 4
 
 EMPTY_HASH = "00000000000000000000000000000000"
-
-FORWARD_UDP_QUEUE = queue.Queue()
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -199,8 +196,7 @@ def forward_udp_packet():
             packet = FORWARD_UDP_QUEUE.get(False)
         except:
             return
-        data_packet = encode_package(PKG_TYPE_UDP, 0, EMPTY_HASH, EMPTY_HASH, packet.hex())
-        sock.sendto(data_packet, (TARGET_IP, TARGET_PORT))
+
 
 def send_data_wrapper() -> None:
     """
@@ -211,16 +207,13 @@ def send_data_wrapper() -> None:
     try:
         while True:
             send_files()
-            if ARGS.udp_port:
-                forward_udp_packet()
-            else:
-                time.sleep(SCAN_INTERVAL)
+            time.sleep(SCAN_INTERVAL)
     except KeyboardInterrupt:
         DIODE_LOGGER.info("Stopped watching")
 
-def listen_udp() -> None:
+def forward_udp() -> None:
     """
-    Fetch packages from socket queue and throw into worker threading queue
+    Fetch packet from incoming UDP port and forward through diode.
     """
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -228,9 +221,10 @@ def listen_udp() -> None:
     DIODE_LOGGER.info("Forwarding UDP packets arriving at %s:%i", ARGS.udp_host, ARGS.udp_port)
     while True:
         data, _ = udp_sock.recvfrom(CHUNK_SIZE)
-        FORWARD_UDP_QUEUE.put(data)
+        data_packet = encode_package(PKG_TYPE_UDP, 0, EMPTY_HASH, EMPTY_HASH, data.hex())
+        sock.sendto(data_packet, (TARGET_IP, TARGET_PORT))
 
 if __name__ == "__main__":
     threading.Thread(target=send_data_wrapper).start()
     if ARGS.udp_port:
-        threading.Thread(target=listen_udp).start()
+        threading.Thread(target=forward_udp).start()
