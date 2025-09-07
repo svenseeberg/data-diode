@@ -8,8 +8,10 @@ import hashlib
 import logging
 import math
 import os
+import queue
 import socket
 import time
+import threading
 import sys
 
 from logging import handlers
@@ -33,6 +35,10 @@ PARSER.add_argument('--target-port', type=int, nargs='?', default=5005,
                     help='Target port')
 PARSER.add_argument('--directory', type=str, nargs='?', required=True,
                     help='directory from which to send files')
+PARSER.add_argument('--udp-port', type=int, nargs='?', required=False,
+                    help='UDP listen port. Incoming packages will be forwarded through the diode. This enables listening for UDP packets.')
+PARSER.add_argument('--udp-host', type=str, nargs='?', required=False, default="127.0.0.1",
+                    help='IP address to listen on for UDP packets.')
 ARGS = PARSER.parse_args()
 
 
@@ -43,12 +49,17 @@ SOURCE_DIR = ARGS.directory
 DELAY_NEXT_CHUNK = 2000
 BATCH_SIZE = 100
 RESEND_PACKET = 2
-SCAN_INTERVAL = 1
+SCAN_INTERVAL = 0.1
 STABILITY_CHECK_DELAY = 1
 
 PKG_TYPE_START = 0
 PKG_TYPE_DATA = 1
 PKG_TYPE_END = 2
+PKG_TYPE_UDP = 4
+
+EMPTY_HASH = "00000000000000000000000000000000"
+
+FORWARD_UDP_QUEUE = queue.Queue()
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -101,7 +112,7 @@ def send_start_paket(filepath: str, rel_path: str, rel_path_hash: str) -> None:
     """
     DIODE_LOGGER.info("Sending file: %s", rel_path)
     filesize = os.path.getsize(filepath)
-    start_packet = encode_package(PKG_TYPE_START, filesize, rel_path_hash, "00000000000000000000000000000000", rel_path)
+    start_packet = encode_package(PKG_TYPE_START, filesize, rel_path_hash, EMPTY_HASH, rel_path)
     for n in range(0, RESEND_PACKET):  # pylint: disable=unused-variable
         sock.sendto(start_packet, (TARGET_IP, TARGET_PORT))
         busy_wait_sleep(DELAY_NEXT_CHUNK)
@@ -110,7 +121,7 @@ def send_end_paket(filepath: str, rel_path: str, count: int) -> None:
     """
     Send last paket with final count
     """
-    end_packet = encode_package(PKG_TYPE_END, count, "00000000000000000000000000000000", "00000000000000000000000000000000", rel_path)
+    end_packet = encode_package(PKG_TYPE_END, count, EMPTY_HASH, EMPTY_HASH, rel_path)
     for n in range(0, RESEND_PACKET):  # pylint: disable=unused-variable
         sock.sendto(end_packet, (TARGET_IP, TARGET_PORT))
         busy_wait_sleep(DELAY_NEXT_CHUNK)
@@ -167,7 +178,7 @@ def is_file_stable(filepath: str, delay: int = STABILITY_CHECK_DELAY) -> bool:
     except FileNotFoundError:
         return False
 
-def scan_directory() -> None:
+def send_files() -> None:
     """
     Watch directory for new files. Send new files via UDP.
     """
@@ -179,12 +190,47 @@ def scan_directory() -> None:
             if is_file_stable(full_path):
                 send_file_chunks(full_path, rel_path)
 
-if __name__ == "__main__":
+def forward_udp_packet():
+    """
+    Forward the content of a UDP packet through the diode.
+    """
+    while FORWARD_UDP_QUEUE.qsize():
+        try:
+            packet = FORWARD_UDP_QUEUE.get(False)
+        except:
+            return
+        data_packet = encode_package(PKG_TYPE_UDP, 0, EMPTY_HASH, EMPTY_HASH, packet.hex())
+        sock.sendto(data_packet, (TARGET_IP, TARGET_PORT))
+
+def send_data_wrapper() -> None:
+    """
+    Wrapper for sending data. Scan for new files and send them. If enabled, forward UDP packets.
+    """
     os.makedirs(SOURCE_DIR, exist_ok=True)
     DIODE_LOGGER.info("Watching for new files in: %s", SOURCE_DIR)
     try:
         while True:
-            scan_directory()
-            time.sleep(SCAN_INTERVAL)
+            send_files()
+            if ARGS.udp_port:
+                forward_udp_packet()
+            else:
+                time.sleep(SCAN_INTERVAL)
     except KeyboardInterrupt:
         DIODE_LOGGER.info("Stopped watching")
+
+def listen_udp() -> None:
+    """
+    Fetch packages from socket queue and throw into worker threading queue
+    """
+    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    udp_sock.bind((ARGS.udp_host, ARGS.udp_port))
+    DIODE_LOGGER.info("Forwarding UDP packets arriving at %s:%i", ARGS.udp_host, ARGS.udp_port)
+    while True:
+        data, _ = udp_sock.recvfrom(CHUNK_SIZE)
+        FORWARD_UDP_QUEUE.put(data)
+
+if __name__ == "__main__":
+    threading.Thread(target=send_data_wrapper).start()
+    if ARGS.udp_port:
+        threading.Thread(target=listen_udp).start()
