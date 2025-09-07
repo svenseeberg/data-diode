@@ -8,6 +8,7 @@ import hashlib
 import logging
 import math
 import os
+import queue
 import socket
 import time
 import threading
@@ -57,6 +58,8 @@ PKG_TYPE_END = 2
 PKG_TYPE_UDP = 4
 
 EMPTY_HASH = "00000000000000000000000000000000"
+
+UDP_FWD_QUEUE = queue.SimpleQueue()
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -211,20 +214,30 @@ def send_data_wrapper() -> None:
     except KeyboardInterrupt:
         DIODE_LOGGER.info("Stopped watching")
 
-def forward_udp() -> None:
+def receive_udp() -> None:
     """
     Fetch packet from incoming UDP port and forward through diode.
     """
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
     udp_sock.bind((ARGS.udp_host, ARGS.udp_port))
     DIODE_LOGGER.info("Forwarding UDP packets arriving at %s:%i", ARGS.udp_host, ARGS.udp_port)
+    bytes_received = 0
     while True:
-        data, _ = udp_sock.recvfrom(CHUNK_SIZE)
-        data_packet = encode_package(PKG_TYPE_UDP, 0, EMPTY_HASH, EMPTY_HASH, data.hex())
-        sock.sendto(data_packet, (TARGET_IP, TARGET_PORT))
+        data, ancdata, flags, addr = udp_sock.recvmsg(65535)
+        UDP_FWD_QUEUE.put(data)
+
+def forward_udp() -> None:
+    while True:
+        data = UDP_FWD_QUEUE.get()
+        for i in range(0, len(data), CHUNK_SIZE):
+            chunk = data[i:i+CHUNK_SIZE]
+            data_packet = encode_package(PKG_TYPE_UDP, i, f'{len("data"):032}', EMPTY_HASH, chunk.hex())
+            sock.sendto(data_packet, (TARGET_IP, TARGET_PORT))
 
 if __name__ == "__main__":
     threading.Thread(target=send_data_wrapper).start()
     if ARGS.udp_port:
+        threading.Thread(target=receive_udp).start()
         threading.Thread(target=forward_udp).start()

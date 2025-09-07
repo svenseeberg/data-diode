@@ -253,7 +253,7 @@ def worker() -> None:
             elif packet["type"] == PKG_TYPE_END and RECEIVE_STATE.file_path:
                 finish_file(packet)
             elif packet["type"] == PKG_TYPE_UDP and ARGS.udp_target_port:
-                FORWARD_UDP_QUEUE.put(bytes.fromhex(packet['data']))
+                FORWARD_UDP_QUEUE.put((bytes.fromhex(packet['data']), packet['count']))
             elif RECEIVE_STATE.file_path:
                 raise ValueError("Unknown packet type")
         except Exception as e:  # pylint: disable=broad-exception-caught
@@ -333,11 +333,8 @@ def forward_udp_packets():
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     DIODE_LOGGER.info("Forwarding UDP packets to %s:%i", ARGS.udp_target_ip, ARGS.udp_target_port)
     while True:
-        if FORWARD_UDP_QUEUE.empty():
-            time.sleep(0.01)
-        else:
-            data_packet = FORWARD_UDP_QUEUE.get()
-            udp_sock.sendto(data_packet, (ARGS.udp_target_ip, ARGS.udp_target_port))
+        data_packet = FORWARD_UDP_QUEUE.get()
+        udp_sock.sendto(data_packet, (ARGS.udp_target_ip, ARGS.udp_target_port))
 
 RECEIVE_STATE = ReceiveState()
 
