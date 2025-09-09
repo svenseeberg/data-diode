@@ -243,6 +243,9 @@ def worker() -> None:
     """
     Listen for incoming UDP packets, validate & write chunks
     """
+    global TOTAL_TRANSFERRED
+    if DISPLAY:
+        DISPLAY.update()
     while True:
         try:
             raw_packet = SOCKET_PKG_QUEUE.get()
@@ -254,9 +257,13 @@ def worker() -> None:
             elif packet["type"] == PKG_TYPE_END and RECEIVE_STATE.file_path:
                 finish_file(packet)
             elif packet["type"] == PKG_TYPE_UDP and ARGS.udp_target_port:
-                FORWARD_UDP_QUEUE.put((bytes.fromhex(packet['data']), int(packet['count']), int(packet['path_hash'])))
+                udp_pkg = bytes.fromhex(packet['data'])
+                TOTAL_TRANSFERRED += len(udp_pkg)
+                FORWARD_UDP_QUEUE.put((udp_pkg, int(packet['count']), int(packet['path_hash'])))
             elif RECEIVE_STATE.file_path:
                 raise ValueError("Unknown packet type")
+            if DISPLAY is not None and packet['count'] % 1000 == 0:
+                DISPLAY.update()
         except Exception as e:  # pylint: disable=broad-exception-caught
             DIODE_LOGGER.error(e)
             DIODE_LOGGER.error(traceback.format_exc())
@@ -326,10 +333,8 @@ def process_chunk(packet: dict) -> None:
         write_chunk_to_file(RECEIVE_STATE.file_path, buffered_packet)
         RECEIVE_STATE.known_chunks.add(buffered_packet['count'])
         RECEIVE_STATE.prev_chunk = buffered_packet['count']
-        if DISPLAY is not None and buffered_packet['count'] % 1000 == 0:
-            DISPLAY.update()
 
-def forward_udp_packets():
+def forward_udp_packets() -> None:
     """
     Re-assemble previous full datagram and send to target.
     """
@@ -337,11 +342,8 @@ def forward_udp_packets():
     DIODE_LOGGER.info("Forwarding UDP packets to %s:%i", ARGS.udp_target_ip, ARGS.udp_target_port)
     previous_count = 0
     full_packet = bytes()
-    bytes_processed = 0
-    bytes_sent = 0
     while True:
         data_packet, count, packet_size = FORWARD_UDP_QUEUE.get()
-        bytes_processed += len(data_packet)
         if count == 0:
             full_packet = data_packet
             previous_count = 0
@@ -350,7 +352,6 @@ def forward_udp_packets():
             previous_count = count
         if len(full_packet) == packet_size:
             udp_sock.sendto(full_packet, (ARGS.udp_target_ip, ARGS.udp_target_port))
-            bytes_sent += len(data_packet)
             previous_count = 0
             full_packet = bytes()
 
@@ -359,6 +360,7 @@ RECEIVE_STATE = ReceiveState()
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 * 1024 * 1024)
 sock.bind((BIND_IP, BIND_PORT))
 
 DISPLAY = Display(ARGS.arduino) if ARGS.arduino else None
