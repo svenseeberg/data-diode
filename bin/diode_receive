@@ -103,7 +103,7 @@ class ReceiveState:
         if len(self.buffer) > 1000:
             raise ValueError(
                 f"Buffer too long, probably missed packet. Last chunk: {self.prev_chunk}"
-                f", next buffered package: {sorted(self.buffer.items())[0][0]}",
+                f", next buffered packet: {sorted(self.buffer.items())[0][0]}",
             )
         self.buffer[packet['count']] = packet
 
@@ -162,12 +162,11 @@ def write_chunk_to_file(path: str, packet: dict) -> None:
     """
     Write validated chunk to file
     """
-    data = bytes.fromhex(packet['data'])
     full_path = os.path.join(OUTPUT_DIR, path)
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
     with open(full_path, 'ab') as f:
-        f.write(data)
-        RECEIVE_STATE.add_bytes(len(data))
+        f.write(packet['data'])
+        RECEIVE_STATE.add_bytes(len(packet['data']))
 
 def new_file(path: str, size: int, path_hash: str) -> None:
     """
@@ -217,7 +216,7 @@ def finish_file(packet: dict) -> None:
     """
     failed_path = os.path.join(OUTPUT_DIR, f"{RECEIVE_STATE.file_path}.failed")
     if is_file_valid(packet):
-        DIODE_LOGGER.info("Finished receiving %s", packet['data'])
+        DIODE_LOGGER.info("Finished receiving %s", packet['data'].decode('utf-8'))
         if os.path.exists(failed_path):
             os.remove(failed_path)
         reset_transfer(success=True)
@@ -248,18 +247,16 @@ def worker() -> None:
         DISPLAY.update()
     while True:
         try:
-            raw_packet = SOCKET_PKG_QUEUE.get()
-            packet = decode_package(raw_packet)
+            packet = decode_packet(SOCKET_PKG_QUEUE.get())
             if packet["type"] == PKG_TYPE_DATA and RECEIVE_STATE.file_path:
                 process_chunk(packet)
             elif packet["type"] == PKG_TYPE_START:
-                new_file(packet["data"], packet["count"], packet["path_hash"])
+                new_file(packet["data"].decode('utf-8'), packet["count"], packet["path_hash"])
             elif packet["type"] == PKG_TYPE_END and RECEIVE_STATE.file_path:
                 finish_file(packet)
             elif packet["type"] == PKG_TYPE_UDP and ARGS.udp_target_port:
-                udp_pkg = bytes.fromhex(packet['data'])
-                TOTAL_TRANSFERRED += len(udp_pkg)
-                FORWARD_UDP_QUEUE.put((udp_pkg, int(packet['count']), int(packet['path_hash'])))
+                TOTAL_TRANSFERRED += len(packet['data'])
+                FORWARD_UDP_QUEUE.put((packet['data'], int(packet['count']), int(packet['path_hash'])))
             elif RECEIVE_STATE.file_path:
                 raise ValueError("Unknown packet type")
             if DISPLAY is not None and packet['count'] % 1000 == 0:
@@ -271,7 +268,7 @@ def worker() -> None:
 
 def listen() -> None:
     """
-    Fetch packages from socket queue and throw into worker threading queue
+    Fetch packets from socket queue and throw into worker threading queue
     """
     bytes_received = 0
     while True:
@@ -284,36 +281,34 @@ def is_chunk_valid(packet: dict) -> bool:
     Check if chunk is valid
     """
     result = True
-    chunk_bytes = bytes.fromhex(packet['data'])
     if packet['path_hash'] != RECEIVE_STATE.path_hash:
         DIODE_LOGGER.warning("Path does not match in %s", packet['count'])
         result = False
-    if hashlib.md5(chunk_bytes).hexdigest() != packet['data_hash']:
+    if hashlib.md5(packet['data']).hexdigest() != packet['data_hash'].decode('utf-8'):
         DIODE_LOGGER.warning("Hash does not match in %s", packet['count'])
         result = False
     if packet['count'] in RECEIVE_STATE.known_chunks:
         result = False
     return result
 
-def decode_package(package: bytes):
+def decode_packet(packet: bytes):
     """
-    Decode package with fixed length substrings. The input data is not validated. The hases must have a length
+    Decode packet with fixed length substrings. The input data is not validated. The hases must have a length
     of 32 chars, the count/filesize must not bef longer than 10 chars. The type is only one char.
 
-    package format:
-        package_type                              = string[0:1]
+    packet format:
+        packet_type                              = string[0:1]
         count(data/end pkg) / filesize(start pkg) = string[1:11]
         path_hash                                 = string[11:43]
         data_hash                                 = string[43:75]
         data(data pkg) / path(start/end pkg)      = string[75:]
     """
-    package_string = package.decode()
     data = {
-        "type": int(package_string[0:1]),
-        "count": int(package_string[1:11]),
-        "path_hash": package_string[11:43],
-        "data_hash": package_string[43:75],
-        "data": package_string[75:]
+        "type": int(packet[0:1]),
+        "count": int(packet[1:11]),
+        "path_hash": packet[11:43],
+        "data_hash": packet[43:75],
+        "data": packet[75:]
     }
     return data
 
