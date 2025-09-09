@@ -49,6 +49,7 @@ SOURCE_DIR = ARGS.directory
 DELAY_NEXT_CHUNK = 1800
 BATCH_SIZE = 100
 RESEND_PACKET = 2
+UDP_RESEND_PACKET = 2
 SCAN_INTERVAL = 2
 STABILITY_CHECK_DELAY = 1
 
@@ -236,11 +237,14 @@ def forward_udp() -> None:
     while True:
         data = UDP_FWD_QUEUE.get()
         count = 0
-        for i in range(0, len(data), CHUNK_SIZE):
-            chunk = data[i:i+CHUNK_SIZE]
-            data_packet = encode_packet(PKG_TYPE_UDP, count, f'{len(data):032}', EMPTY_HASH, chunk)
-            sock.sendto(data_packet, (TARGET_IP, TARGET_PORT))
-            count += 1
+        pkg_id = hashlib.md5(str(time.time_ns()).encode()).hexdigest()
+        data_length = f'{len(data):032}'
+        for n in range(0, UDP_RESEND_PACKET):
+            for i in range(0, len(data), CHUNK_SIZE):
+                chunk = data[i:i+CHUNK_SIZE]
+                data_packet = encode_packet(PKG_TYPE_UDP, count, data_length, pkg_id, chunk)
+                sock.sendto(data_packet, (TARGET_IP, TARGET_PORT))
+                count += 1
 
 if __name__ == "__main__":
     threading.Thread(target=send_data_wrapper).start()
