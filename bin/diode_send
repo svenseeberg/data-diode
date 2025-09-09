@@ -36,17 +36,17 @@ PARSER.add_argument('--target-port', type=int, nargs='?', default=5005,
 PARSER.add_argument('--directory', type=str, nargs='?', required=True,
                     help='directory from which to send files')
 PARSER.add_argument('--udp-port', type=int, nargs='?', required=False,
-                    help='UDP listen port. Incoming packages will be forwarded through the diode. This enables listening for UDP packets.')
+                    help='UDP listen port. Incoming packets will be forwarded through the diode. This enables listening for UDP packets.')
 PARSER.add_argument('--udp-host', type=str, nargs='?', required=False, default="127.0.0.1",
                     help='IP address to listen on for UDP packets.')
 ARGS = PARSER.parse_args()
 
 
-CHUNK_SIZE = 640
+CHUNK_SIZE = 940
 TARGET_IP = ARGS.target_subnet
 TARGET_PORT = int(ARGS.target_port)
 SOURCE_DIR = ARGS.directory
-DELAY_NEXT_CHUNK = 2000
+DELAY_NEXT_CHUNK = 1800
 BATCH_SIZE = 100
 RESEND_PACKET = 2
 SCAN_INTERVAL = 2
@@ -86,25 +86,27 @@ def get_chunks(filepath: str, batch):
                 break
             yield data
 
-def encode_package(pkg_type: int, count_or_filesize: int, rel_path_hash: str, data_hash: str, data_or_path: str):
+def encode_packet(pkg_type: int, count_or_filesize: int, rel_path_hash: str, data_hash: str, data_or_path: str):
     """
-    Create package with fixed length substrings. The input data is not validated. The hases must have a length
+    Create packet with fixed length substrings. The input data is not validated. The hases must have a length
     of 32 chars, the count/filesize must not bef longer than 10 chars. The type is only one char.
 
-    package format:
-        package_type                              = string[0:1]
+    packet format:
+        packet_type                              = string[0:1]
         count(data/end pkg) / filesize(start pkg) = string[1:11]
         path_hash                                 = string[11:43]
         data_hash                                 = string[43:75]
         data(data pkg) / path(start/end pkg)      = string[75:]
 
-    :param pkg_type: integer with length one which indicates the package type.
-    :param count_or_filesize: the filesize in the start package or the package count for data packages. Max 10 chars in length.
+    :param pkg_type: integer with length one which indicates the packet type.
+    :param count_or_filesize: the filesize in the start packet or the packet count for data packets. Max 10 chars in length.
     :param rel_path_hash: md5sum of rel path
     :param data_hash: md5sum of data
-    :param data_or_path: the relative path of the file in the start package or a file chunk for data packages.
+    :param data_or_path: the relative path of the file in the start packet or a file chunk for data packets.
     """
-    return f"{pkg_type}{count_or_filesize:010}{rel_path_hash}{data_hash}{data_or_path}".encode()
+    if not isinstance(data_or_path, bytes):
+        data_or_path = data_or_path.encode('utf-8')
+    return str(pkg_type).encode('utf-8')+f"{count_or_filesize:010}".encode('utf-8')+rel_path_hash.encode('utf-8')+data_hash.encode('utf-8')+data_or_path
 
 def send_start_paket(filepath: str, rel_path: str, rel_path_hash: str) -> None:
     """
@@ -112,7 +114,7 @@ def send_start_paket(filepath: str, rel_path: str, rel_path_hash: str) -> None:
     """
     DIODE_LOGGER.info("Sending file: %s", rel_path)
     filesize = os.path.getsize(filepath)
-    start_packet = encode_package(PKG_TYPE_START, filesize, rel_path_hash, EMPTY_HASH, rel_path)
+    start_packet = encode_packet(PKG_TYPE_START, filesize, rel_path_hash, EMPTY_HASH, rel_path)
     for n in range(0, RESEND_PACKET):  # pylint: disable=unused-variable
         sock.sendto(start_packet, (TARGET_IP, TARGET_PORT))
         busy_wait_sleep(DELAY_NEXT_CHUNK)
@@ -121,7 +123,7 @@ def send_end_paket(filepath: str, rel_path: str, count: int) -> None:
     """
     Send last paket with final count
     """
-    end_packet = encode_package(PKG_TYPE_END, count, EMPTY_HASH, EMPTY_HASH, rel_path)
+    end_packet = encode_packet(PKG_TYPE_END, count, EMPTY_HASH, EMPTY_HASH, rel_path)
     for n in range(0, RESEND_PACKET):  # pylint: disable=unused-variable
         sock.sendto(end_packet, (TARGET_IP, TARGET_PORT))
         busy_wait_sleep(DELAY_NEXT_CHUNK)
@@ -133,7 +135,7 @@ def send_data_paket(rel_path_hash: str, chunk: bytes, count: int) -> None:
     Send data paket
     """
     data_hash = hashlib.md5(chunk).hexdigest()
-    data_packet = encode_package(PKG_TYPE_DATA, count, rel_path_hash, data_hash, chunk.hex())
+    data_packet = encode_packet(PKG_TYPE_DATA, count, rel_path_hash, data_hash, chunk)
     sock.sendto(data_packet, (TARGET_IP, TARGET_PORT))
     busy_wait_sleep(DELAY_NEXT_CHUNK)
 
@@ -236,7 +238,7 @@ def forward_udp() -> None:
         count = 0
         for i in range(0, len(data), CHUNK_SIZE):
             chunk = data[i:i+CHUNK_SIZE]
-            data_packet = encode_package(PKG_TYPE_UDP, count, f'{len(data):032}', EMPTY_HASH, chunk.hex())
+            data_packet = encode_packet(PKG_TYPE_UDP, count, f'{len(data):032}', EMPTY_HASH, chunk)
             sock.sendto(data_packet, (TARGET_IP, TARGET_PORT))
             count += 1
 
