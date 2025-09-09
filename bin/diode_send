@@ -216,20 +216,21 @@ def send_data_wrapper() -> None:
 
 def receive_udp() -> None:
     """
-    Fetch packet from incoming UDP port and forward through diode.
+    Fetch packet from incoming UDP port and queue for diode.
     """
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
+    udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 * 1024 * 1024)
     udp_sock.bind((ARGS.udp_host, ARGS.udp_port))
     DIODE_LOGGER.info("Forwarding UDP packets arriving at %s:%i", ARGS.udp_host, ARGS.udp_port)
-    bytes_received = 0
     while True:
         data, ancdata, flags, addr = udp_sock.recvmsg(65535)
         UDP_FWD_QUEUE.put(data)
-        bytes_received += len(data)
 
 def forward_udp() -> None:
+    """
+    Send UDP packet through diode.
+    """
     bytes_forwarded = 0
     while True:
         data = UDP_FWD_QUEUE.get()
