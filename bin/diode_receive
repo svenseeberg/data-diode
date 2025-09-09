@@ -245,7 +245,8 @@ def worker() -> None:
     """
     while True:
         try:
-            packet = decode_package(SOCKET_PKG_QUEUE.get())
+            raw_packet = SOCKET_PKG_QUEUE.get()
+            packet = decode_package(raw_packet)
             if packet["type"] == PKG_TYPE_DATA and RECEIVE_STATE.file_path:
                 process_chunk(packet)
             elif packet["type"] == PKG_TYPE_START:
@@ -253,21 +254,23 @@ def worker() -> None:
             elif packet["type"] == PKG_TYPE_END and RECEIVE_STATE.file_path:
                 finish_file(packet)
             elif packet["type"] == PKG_TYPE_UDP and ARGS.udp_target_port:
-                FORWARD_UDP_QUEUE.put((bytes.fromhex(packet['data']), packet['count']))
+                FORWARD_UDP_QUEUE.put((bytes.fromhex(packet['data']), int(packet['count']), int(packet['path_hash'])))
             elif RECEIVE_STATE.file_path:
                 raise ValueError("Unknown packet type")
         except Exception as e:  # pylint: disable=broad-exception-caught
             DIODE_LOGGER.error(e)
-            print(traceback.format_exc())
+            DIODE_LOGGER.error(traceback.format_exc())
             reset_transfer(success=False)
 
 def listen() -> None:
     """
     Fetch packages from socket queue and throw into worker threading queue
     """
+    bytes_received = 0
     while True:
-        data, _ = sock.recvfrom(4096)
+        data, _ = sock.recvfrom(65535)
         SOCKET_PKG_QUEUE.put(data)
+        bytes_received += len(data)
 
 def is_chunk_valid(packet: dict) -> bool:
     """
@@ -328,13 +331,28 @@ def process_chunk(packet: dict) -> None:
 
 def forward_udp_packets():
     """
-    Forward the content of a UDP packet through the diode.
+    Re-assemble previous full datagram and send to target.
     """
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     DIODE_LOGGER.info("Forwarding UDP packets to %s:%i", ARGS.udp_target_ip, ARGS.udp_target_port)
+    previous_count = 0
+    full_packet = bytes()
+    bytes_processed = 0
+    bytes_sent = 0
     while True:
-        data_packet = FORWARD_UDP_QUEUE.get()
-        udp_sock.sendto(data_packet, (ARGS.udp_target_ip, ARGS.udp_target_port))
+        data_packet, count, packet_size = FORWARD_UDP_QUEUE.get()
+        bytes_processed += len(data_packet)
+        if count == 0:
+            full_packet = data_packet
+            previous_count = 0
+        elif count == previous_count + 1:
+            full_packet = full_packet + data_packet
+            previous_count = count
+        if len(full_packet) == packet_size:
+            udp_sock.sendto(full_packet, (ARGS.udp_target_ip, ARGS.udp_target_port))
+            bytes_sent += len(data_packet)
+            previous_count = 0
+            full_packet = bytes()
 
 RECEIVE_STATE = ReceiveState()
 

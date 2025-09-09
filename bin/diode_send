@@ -59,7 +59,7 @@ PKG_TYPE_UDP = 4
 
 EMPTY_HASH = "00000000000000000000000000000000"
 
-UDP_FWD_QUEUE = queue.SimpleQueue()
+UDP_FWD_QUEUE = queue.Queue()
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -227,14 +227,19 @@ def receive_udp() -> None:
     while True:
         data, ancdata, flags, addr = udp_sock.recvmsg(65535)
         UDP_FWD_QUEUE.put(data)
+        bytes_received += len(data)
 
 def forward_udp() -> None:
+    bytes_forwarded = 0
     while True:
         data = UDP_FWD_QUEUE.get()
+        count = 0
         for i in range(0, len(data), CHUNK_SIZE):
             chunk = data[i:i+CHUNK_SIZE]
-            data_packet = encode_package(PKG_TYPE_UDP, i, f'{len("data"):032}', EMPTY_HASH, chunk.hex())
+            data_packet = encode_package(PKG_TYPE_UDP, count, f'{len(data):032}', EMPTY_HASH, chunk.hex())
             sock.sendto(data_packet, (TARGET_IP, TARGET_PORT))
+            count += 1
+            bytes_forwarded += len(chunk)
 
 if __name__ == "__main__":
     threading.Thread(target=send_data_wrapper).start()
