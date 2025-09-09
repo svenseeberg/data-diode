@@ -70,6 +70,7 @@ Clone this repo or download the latest .zip file and extract. Then `cd` into the
    ```
    cp ./etc/rc.d/diode_receive /etc/rc.d/
    ```
+1. Optional: to enable UDP packet forwarding, edit the `/etc/rc.d/diode_receive` and append the `--udp-target-port PORTNUM --udp-target-ip IPADDR` to the `daemon_flags` string.
 1. Optional: if you're using an Arduino with display, allow the `diode` user to write to the serial port:
    ```sh
    usermod -G dialer diode
@@ -97,6 +98,7 @@ Clone this repo or download the latest .zip file and extract. Then `cd` into the
    cp ./etc/rc.d/diode_send /etc/rc.d/
    ```
 1. Edit the device paths in `/etc/rc.d/diode_send`.
+1. Optional: to enable UDP packet forwarding, edit the `/etc/rc.d/diode_receive` and append the `--udp-port PORTNUM --udp-ip IPADDR` to the `daemon_flags` string.
 1. Optional: if you're not using an Arduino, remove the `--arduino` argument in the `/etc/rc.d/diode_`
 1. Create the directory from wich the files are read.
 1. Copy the main program:
@@ -139,3 +141,14 @@ Clone this repo or download the latest .zip file and extract. Then `cd` into the
    ```
 
 The [UPDATE.md](UPDATE.md) describes how to download and transfer the necessary files for updating the base system and packages.
+
+## Test UDP Packet Forwarding
+
+1. On the receiver (or another machine in the internal network) start netcat in listen mode:
+   ```bash
+   nc -u -l $TARGET_PORT > received.txt
+   ```
+1. On the sender (or another machine in the online network) use netcat to send a test file. Use pipeview for rate limiting:
+   ```bash
+   cat testfile.txt | pv -L 700000 | nc -u $SENDER_PI_IP $LISTEN_PORT
+   ```
