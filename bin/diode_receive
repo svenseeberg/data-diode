@@ -256,7 +256,7 @@ def worker() -> None:
                 finish_file(packet)
             elif packet["type"] == PKG_TYPE_UDP and ARGS.udp_target_port:
                 TOTAL_TRANSFERRED += len(packet['data'])
-                FORWARD_UDP_QUEUE.put((packet['data'], int(packet['count']), int(packet['path_hash'])))
+                FORWARD_UDP_QUEUE.put(packet)
             elif RECEIVE_STATE.file_path:
                 raise ValueError("Unknown packet type")
             if DISPLAY is not None and packet['count'] % 1000 == 0:
@@ -329,26 +329,39 @@ def process_chunk(packet: dict) -> None:
         RECEIVE_STATE.known_chunks.add(buffered_packet['count'])
         RECEIVE_STATE.prev_chunk = buffered_packet['count']
 
+def decode_udp_packet(packet: dict) -> dict:
+    """
+    Convert packet that contains file or UDP data into UDP packet.
+    """
+    return {
+        'data': packet['data'],
+        'count': int(packet['count']),
+        'size': int(packet['path_hash']),
+        'id': packet['data_hash'][:8]
+    }
+
 def forward_udp_packets() -> None:
     """
     Re-assemble previous full datagram and send to target.
     """
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     DIODE_LOGGER.info("Forwarding UDP packets to %s:%i", ARGS.udp_target_ip, ARGS.udp_target_port)
-    previous_count = 0
+    current_id = None
     full_packet = bytes()
     while True:
-        data_packet, count, packet_size = FORWARD_UDP_QUEUE.get()
-        if count == 0:
-            full_packet = data_packet
+        packet = decode_udp_packet(FORWARD_UDP_QUEUE.get())
+        if packet['count'] == 0 and current_id is None:
+            full_packet = packet['data']
             previous_count = 0
-        elif count == previous_count + 1:
-            full_packet = full_packet + data_packet
-            previous_count = count
-        if len(full_packet) == packet_size:
+            current_id = packet['id']
+        elif packet['count'] == previous_count + 1 and current_id == packet['id']:
+            full_packet = full_packet + packet['data']
+            previous_count = packet['count']
+        if len(full_packet) == packet['size']:
             udp_sock.sendto(full_packet, (ARGS.udp_target_ip, ARGS.udp_target_port))
             previous_count = 0
             full_packet = bytes()
+            current_id = None
 
 RECEIVE_STATE = ReceiveState()
 
