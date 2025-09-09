@@ -39,10 +39,10 @@ PARSER.add_argument('--directory', type=str, nargs='?', required=True,
                     help='directory from which to send files')
 PARSER.add_argument('--arduino', type=str, nargs='?', required=False,
                     help='serial device, i.e. /dev/cuaU1')
-PARSER.add_argument('--udp-target-port', type=int, nargs='?', required=False,
-                    help='Target port for UDP packet forwarding. This enables forwarding of UDP packets.')
-PARSER.add_argument('--udp-target-ip', type=str, nargs='?', required=False, default="127.0.0.1",
-                    help='Target ip for UDP packet forwarding.')
+PARSER.add_argument('--forward-target-port', type=int, nargs='?', required=False,
+                    help='Target port for TCP/UDP packet forwarding. This enables forwarding of UDP packets.')
+PARSER.add_argument('--forward-target-ip', type=str, nargs='?', required=False, default="127.0.0.1",
+                    help='Target IP address for TCP/UDP packet forwarding.')
 ARGS = PARSER.parse_args()
 
 # System setup based on arguments
@@ -55,13 +55,15 @@ PKG_TYPE_START = 0
 PKG_TYPE_DATA = 1
 PKG_TYPE_END = 2
 PKG_TYPE_UDP = 4
+PKG_TYPE_TCP = 5
+
 # Transfer state
 FILES_TRANSFERRED = []
 FILES_FAILED = []
 TOTAL_TRANSFERRED = 0
 
 SOCKET_PKG_QUEUE = queue.Queue()
-FORWARD_UDP_QUEUE = queue.Queue()
+FORWARD_PKG_QUEUE = queue.Queue()
 
 class ReceiveState:
     """
@@ -254,9 +256,9 @@ def worker() -> None:
                 new_file(packet["data"].decode('utf-8'), packet["count"], packet["path_hash"])
             elif packet["type"] == PKG_TYPE_END and RECEIVE_STATE.file_path:
                 finish_file(packet)
-            elif packet["type"] == PKG_TYPE_UDP and ARGS.udp_target_port:
+            elif packet["type"] in [PKG_TYPE_UDP, PKG_TYPE_TCP] and ARGS.forward_target_port:
                 TOTAL_TRANSFERRED += len(packet['data'])
-                FORWARD_UDP_QUEUE.put(packet)
+                FORWARD_PKG_QUEUE.put(packet)
             elif RECEIVE_STATE.file_path:
                 raise ValueError("Unknown packet type")
             if DISPLAY is not None and packet['count'] % 1000 == 0:
@@ -329,27 +331,31 @@ def process_chunk(packet: dict) -> None:
         RECEIVE_STATE.known_chunks.add(buffered_packet['count'])
         RECEIVE_STATE.prev_chunk = buffered_packet['count']
 
-def decode_udp_packet(packet: dict) -> dict:
+def decode_forward_packet(packet: dict) -> dict:
     """
     Convert packet that contains file or UDP data into UDP packet.
     """
     return {
+        'type': int(packet['type']),
         'data': packet['data'],
         'count': int(packet['count']),
         'size': int(packet['path_hash']),
         'id': packet['data_hash'][:8]
     }
 
-def forward_udp_packets() -> None:
+def forward_packets() -> None:
     """
     Re-assemble previous full datagram and send to target.
     """
-    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    DIODE_LOGGER.info("Forwarding UDP packets to %s:%i", ARGS.udp_target_ip, ARGS.udp_target_port)
+    udp_fwd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    tcp_fwd_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    DIODE_LOGGER.info("Forwarding TCP/UDP packets to %s:%i", ARGS.forward_target_ip, ARGS.forward_target_port)
     current_id = None
     full_packet = bytes()
+    previous_count = 0
     while True:
-        packet = decode_udp_packet(FORWARD_UDP_QUEUE.get())
+        packet = decode_forward_packet(FORWARD_PKG_QUEUE.get())
+        tcp_fwd_sock.connect((ARGS.forward_target_ip, ARGS.forward_target_port))
         if packet['count'] == 0 and current_id is None:
             full_packet = packet['data']
             previous_count = 0
@@ -358,10 +364,14 @@ def forward_udp_packets() -> None:
             full_packet = full_packet + packet['data']
             previous_count = packet['count']
         if len(full_packet) == packet['size']:
-            udp_sock.sendto(full_packet, (ARGS.udp_target_ip, ARGS.udp_target_port))
+            if packet['type'] == PKG_TYPE_UDP:
+                udp_fwd_sock.sendto(full_packet, (ARGS.forward_target_ip, ARGS.forward_target_port))
+            else:
+                tcp_fwd_sock.sendall(full_packet)
             previous_count = 0
             full_packet = bytes()
             current_id = None
+        tcp_fwd_sock.close()
 
 RECEIVE_STATE = ReceiveState()
 
@@ -377,5 +387,5 @@ if __name__ == "__main__":
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     threading.Thread(target=listen).start()
     threading.Thread(target=worker).start()
-    if ARGS.udp_target_port:
-        threading.Thread(target=forward_udp_packets).start()
+    if ARGS.forward_target_port:
+        threading.Thread(target=forward_packets).start()

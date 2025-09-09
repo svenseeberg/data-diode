@@ -35,17 +35,14 @@ PARSER.add_argument('--target-port', type=int, nargs='?', default=5005,
                     help='Target port')
 PARSER.add_argument('--directory', type=str, nargs='?', required=True,
                     help='directory from which to send files')
-PARSER.add_argument('--udp-port', type=int, nargs='?', required=False,
-                    help='UDP listen port. Incoming packets will be forwarded through the diode. This enables listening for UDP packets.')
-PARSER.add_argument('--udp-host', type=str, nargs='?', required=False, default="127.0.0.1",
-                    help='IP address to listen on for UDP packets.')
+PARSER.add_argument('--forward-port', type=int, nargs='?', required=False,
+                    help='TCP/UDP listen port. Incoming packets will be forwarded through the diode. This enables listening for UDP packets.')
+PARSER.add_argument('--forward-host', type=str, nargs='?', required=False, default="127.0.0.1",
+                    help='IP address to listen on for TCP/UDP packets.')
 ARGS = PARSER.parse_args()
 
-
+# Relevant for tuning
 CHUNK_SIZE = 940
-TARGET_IP = ARGS.target_subnet
-TARGET_PORT = int(ARGS.target_port)
-SOURCE_DIR = ARGS.directory
 DELAY_NEXT_CHUNK = 1800
 BATCH_SIZE = 100
 RESEND_PACKET = 2
@@ -53,14 +50,21 @@ UDP_RESEND_PACKET = 2
 SCAN_INTERVAL = 2
 STABILITY_CHECK_DELAY = 1
 
+# Easy access to arguments
+TARGET_IP = ARGS.target_subnet
+TARGET_PORT = int(ARGS.target_port)
+SOURCE_DIR = ARGS.directory
+
+# Static variables
 PKG_TYPE_START = 0
 PKG_TYPE_DATA = 1
 PKG_TYPE_END = 2
 PKG_TYPE_UDP = 4
+PKG_TYPE_TCP = 5
 
 EMPTY_HASH = "00000000000000000000000000000000"
 
-UDP_FWD_QUEUE = queue.Queue()
+PKG_FWD_QUEUE = queue.Queue()
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -224,30 +228,50 @@ def receive_udp() -> None:
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 * 1024 * 1024)
-    udp_sock.bind((ARGS.udp_host, ARGS.udp_port))
-    DIODE_LOGGER.info("Forwarding UDP packets arriving at %s:%i", ARGS.udp_host, ARGS.udp_port)
+    udp_sock.bind((ARGS.forward_host, ARGS.forward_port))
+    DIODE_LOGGER.info("Forwarding UDP packets arriving at %s:%i", ARGS.forward_host, ARGS.forward_port)
     while True:
         data, ancdata, flags, addr = udp_sock.recvmsg(65535)
-        UDP_FWD_QUEUE.put(data)
+        PKG_FWD_QUEUE.put((PKG_TYPE_UDP, data))
 
-def forward_udp() -> None:
+def receive_tcp() -> None:
+    """
+    Fetch packet from incoming UDP port and queue for diode.
+    """
+    tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    tcp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 * 1024 * 1024)
+    tcp_sock.bind((ARGS.forward_host, ARGS.forward_port))
+    tcp_sock.listen(5)
+    DIODE_LOGGER.info("Forwarding TCP packets arriving at %s:%i", ARGS.forward_host, ARGS.forward_port)
+    while True:
+        client_sock, addr = tcp_sock.accept()
+        while True:
+            data = client_sock.recv(4096)
+            PKG_FWD_QUEUE.put((PKG_TYPE_TCP,data))
+            if not data:
+                break
+        client_sock.close()
+
+def forward_packets() -> None:
     """
     Send UDP packet through diode.
     """
     while True:
-        data = UDP_FWD_QUEUE.get()
+        pkg_type, data = PKG_FWD_QUEUE.get()
         count = 0
         pkg_id = hashlib.md5(str(time.time_ns()).encode()).hexdigest()
         data_length = f'{len(data):032}'
         for n in range(0, UDP_RESEND_PACKET):
             for i in range(0, len(data), CHUNK_SIZE):
                 chunk = data[i:i+CHUNK_SIZE]
-                data_packet = encode_packet(PKG_TYPE_UDP, count, data_length, pkg_id, chunk)
+                data_packet = encode_packet(pkg_type, count, data_length, pkg_id, chunk)
                 sock.sendto(data_packet, (TARGET_IP, TARGET_PORT))
                 count += 1
 
 if __name__ == "__main__":
     threading.Thread(target=send_data_wrapper).start()
-    if ARGS.udp_port:
+    if ARGS.forward_port:
         threading.Thread(target=receive_udp).start()
-        threading.Thread(target=forward_udp).start()
+        threading.Thread(target=receive_tcp).start()
+        threading.Thread(target=forward_packets).start()
