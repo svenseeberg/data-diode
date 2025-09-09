@@ -231,7 +231,6 @@ def forward_udp() -> None:
     """
     Send UDP packet through diode.
     """
-    bytes_forwarded = 0
     while True:
         data = UDP_FWD_QUEUE.get()
         count = 0
@@ -240,7 +239,6 @@ def forward_udp() -> None:
             data_packet = encode_package(PKG_TYPE_UDP, count, f'{len(data):032}', EMPTY_HASH, chunk.hex())
             sock.sendto(data_packet, (TARGET_IP, TARGET_PORT))
             count += 1
-            bytes_forwarded += len(chunk)
 
 if __name__ == "__main__":
     threading.Thread(target=send_data_wrapper).start()
