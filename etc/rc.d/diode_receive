@@ -6,7 +6,7 @@ daemon_user="diode"
 
 . /etc/rc.d/rc.subr
 
-pexp="python3 \/usr\/local\/bin\/diode_receive(.*)"
+pexp="\/usr\/local\/bin\/diode_receive(.*)"
 
 rc_start() {
         logger "Starting diode receiver with flags ${daemon_flags}"

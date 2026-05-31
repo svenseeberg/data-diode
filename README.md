@@ -1,5 +1,5 @@
 ## About
-This project is a OpenBSD and Python based
+This project is an OpenBSD-targeted, Rust-based
 [data diode](https://en.wikipedia.org/wiki/Unidirectional_network)
 intended to be deployed on two Raspberry Pis. It transmits files
 via UDP through a fiber optics cable without a back channel. An
@@ -47,15 +47,21 @@ In a previous version a Serial connection was used. Check out the
 tag for the Serial version.
 
 ## Speed and Error Rate
-The speed of the diode is mostly limited by packet loss. A data rate
-of about 1.3 MB/s can be achieved. This is fast enough to keep a mirror of
-OpenBSD with a selected subset of packages up to date in an internal
-network.
+The speed of the diode is mostly limited by CPU or the SD card. A data
+rate of about 5 to 10 MB/s can be achieved. This is fast enough to keep
+a mirror of OpenBSD with a selected subset of packages up to date in an
+internal network.
 
-Depending on the configured speed, some packets are lost. If a packet loss
-occured in my tests, then usually dozens packets at a time. To mitigate
-this problem, data chunks are sent in batches of 100. These batches are
-then resent once.
+Depending on the configured speed, some packets are lost. To mitigate this
+problem, the sender adds Reed-Solomon forward error correction (FEC) parity
+packets after each file (roughly 10% of the data shard count, clamped to a
+sensible range). The receiver buffers data and parity until the end-of-file
+marker arrives, then reconstructs any missing data chunks from the parity
+shards before writing the file. Files exceeding the FEC shard limit are
+sent without parity and a warning is logged.
+
+START and END control packets are transmitted multiple times to survive
+single-packet loss without falling back to FEC.
 
 To avoid having to re-transmit large files, which in turn is again
 error-prone, chunking large files before transmitting is
@@ -67,6 +73,48 @@ can re-assemble the original files on the receiving Pi. The scripts use
 There are some serious limitations to the concept of the diode and the
 mystical [air gap](https://cyber.bgu.ac.il/air-gap/). Beyond that all
 security caveats apply.
+
+## Building from source
+The workspace contains three crates: `diode_common` (shared logging, MD5
+helper, wire-format constants and helpers), `diode_send`, and
+`diode_receive`. A stable Rust toolchain (`cargo`) is required.
+
+```bash
+# Build both binaries in release mode
+cargo build --release
+
+# Build the receiver with Arduino LCD support
+cargo build --release --features arduino --package diode-receive
+```
+
+The resulting binaries are placed in `target/release/diode_send` and
+`target/release/diode_receive`.
+
+### Running locally
+
+```bash
+# Sender
+cargo run --release --bin diode_send -- \
+    --directory /path/to/send \
+    --target-subnet 10.125.125.255 \
+    --target-port 5005
+
+# Receiver (without Arduino)
+cargo run --release --bin diode_receive -- \
+    --directory /path/to/receive \
+    --bind-subnet 10.125.125.255 \
+    --bind-port 5005
+
+# Receiver (with Arduino LCD on /dev/cuaU0)
+cargo run --release --features arduino --bin diode_receive -- \
+    --directory /path/to/receive \
+    --bind-subnet 10.125.125.255 \
+    --bind-port 5005 \
+    --arduino /dev/cuaU0
+```
+
+UDP forwarding through the diode is enabled by passing `--udp-port` on the
+sender and `--udp-target-port`/`--udp-target-ip` on the receiver.
 
 ## Installation instructions
 For details about the installation, read [INSTALL.md](INSTALL.md). For

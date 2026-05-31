@@ -1,0 +1,15 @@
+[package]
+name = "diode-send"
+version = "4.0.0"
+edition = "2024"
+
+[[bin]]
+name = "diode_send"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+log = "0.4"
+libc = "0.2"
+reed-solomon-simd = "3.1"
+diode-common = { path = "../diode_common" }
