@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 #[cfg(feature = "arduino")]
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use log::{error, info, warn};
@@ -538,10 +538,18 @@ fn forward_udp_packets(args: Args, rx: mpsc::Receiver<Packet>) {
 #[cfg(feature = "arduino")]
 struct Display {
     port: Box<dyn serialport::SerialPort>,
+    last_update: Instant,
 }
 
 #[cfg(feature = "arduino")]
 impl Display {
+    /// Minimum interval between display updates. The HD44780 over I2C runs at
+    /// roughly 500 chars/s while the serial link delivers ~3840 bytes/s, so
+    /// back-to-back updates can overflow the Arduino's 64-byte serial buffer.
+    /// A lost `\n` desyncs the sketch's row toggle and the display ends up
+    /// printing line 1 onto row 1 (and vice versa) for the rest of the run.
+    const MIN_INTERVAL: Duration = Duration::from_millis(250);
+
     fn new(device: &str) -> Option<Self> {
         match serialport::new(device, 38400).timeout(Duration::from_secs(1)).open() {
             Ok(mut port) => {
@@ -549,10 +557,13 @@ impl Display {
                 // Arduino boards. Wait for the bootloader to hand control
                 // back to the sketch before sending anything.
                 thread::sleep(Duration::from_secs(2));
-                let _ = port.write_all(b"               \n");
-                let _ = port.write_all(b"               \n");
+                let _ = port.write_all(b"\r                ");
+                let _ = port.write_all(b"\n                ");
                 let _ = port.flush();
-                Some(Self { port })
+                Some(Self {
+                    port,
+                    last_update: Instant::now() - Self::MIN_INTERVAL,
+                })
             }
             Err(e) => {
                 error!("Failed to open serial port {}: {}", device, e);
@@ -561,7 +572,13 @@ impl Display {
         }
     }
 
-    fn update(&mut self, stats: &Stats, state: &ReceiveState) {
+    fn update(&mut self, stats: &Stats, state: &ReceiveState, force: bool) {
+        let now = Instant::now();
+        if !force && now.duration_since(self.last_update) < Self::MIN_INTERVAL {
+            return;
+        }
+        self.last_update = now;
+
         let data_mb = (stats.total_transferred as f64) / 1024.0 / 1024.0;
         let (state_str, progress_str) = if state.file_path.is_some() {
             let progress = if state.file_size == 0 {
@@ -573,15 +590,20 @@ impl Display {
         } else {
             ("Wait ", "     ".to_string())
         };
-        let line1 = format!(
-            "{}{}F {}E",
+        let line1_raw = format!(
+            "{}{:>3}F {:>2}E",
             state_str, stats.files_transferred, stats.files_failed
         );
-        let line2 = format!("{:.1}MB{}", data_mb, progress_str);
+        let line2_raw = format!("{:>5.1}MB{}", data_mb, progress_str);
+        let line1 = format!("{:<16.16}", line1_raw);
+        let line2 = format!("{:<16.16}", line2_raw);
+        // '\r' resets the sketch's row tracker so line1 always lands on row 0
+        // even if a previous update lost a byte. '\n' between the lines moves
+        // the cursor to row 1 for line2.
+        let _ = self.port.write_all(b"\r");
         let _ = self.port.write_all(line1.as_bytes());
         let _ = self.port.write_all(b"\n");
         let _ = self.port.write_all(line2.as_bytes());
-        let _ = self.port.write_all(b"\n");
         let _ = self.port.flush();
     }
 }
@@ -651,7 +673,7 @@ fn main() {
     {
         if let Ok(mut d) = display.lock() {
             if let Some(d) = d.as_mut() {
-                d.update(&stats.lock().unwrap(), &state.lock().unwrap());
+                d.update(&stats.lock().unwrap(), &state.lock().unwrap(), true);
             }
         }
     }
@@ -734,6 +756,7 @@ fn main() {
                             d.update(
                                 &stats_worker.lock().unwrap(),
                                 &state_worker.lock().unwrap(),
+                                force,
                             );
                         }
                     }
