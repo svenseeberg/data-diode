@@ -78,7 +78,7 @@ Clone this repo or download the latest .zip file and extract. Then `cd` into the
 1. Create the directory to which the received files are written.
 1. Copy the main program:
    ```
-   cp ./bin/diode_receive /usr/local/bin/
+   wget https://github.com/svenseeberg/data-diode/releases/download/v4.0.0/diode_receive-aarch64-openbsd-7.8 -o /usr/local/bin/diode_receive
    ```
 1. Enable the service:
    ```
@@ -93,10 +93,10 @@ Clone this repo or download the latest .zip file and extract. Then `cd` into the
    ```
 1. Copy the rc.d file:
    ```
-   cp ./etc/rc.d/diode_send /etc/rc.d/
+   wget https://github.com/svenseeberg/data-diode/releases/download/v4.0.0/diode_send-aarch64-openbsd-7.8 -o /usr/local/bin/diode_send
    ```
 1. Edit the device paths in `/etc/rc.d/diode_send`.
-1. Optional: to enable UDP packet forwarding, edit the `/etc/rc.d/diode_receive` and append the `--udp-port PORTNUM --udp-ip IPADDR` to the `daemon_flags` string.
+1. Optional: to enable UDP packet forwarding, edit the `/etc/rc.d/diode_send` and append the `--udp-port PORTNUM --udp-ip IPADDR` to the `daemon_flags` string.
 1. Optional: if you're not using an Arduino, remove the `--arduino` argument in the `/etc/rc.d/diode_`
 1. Create the directory from wich the files are read.
 1. Copy the main program:
