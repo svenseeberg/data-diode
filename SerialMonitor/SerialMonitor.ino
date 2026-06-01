@@ -31,6 +31,11 @@ void loop() {
     char inChar = (char)Serial.read();
     if (inChar == char('\n')) {
       toggle_line();
+    } else if (inChar == char('\r')) {
+      // Force cursor and row-toggle state to a known position so the
+      // sender can recover from any prior desync (e.g. a lost '\n').
+      line = 0;
+      lcd.setCursor(0, 0);
     } else {
       lcd.print(inChar);
     }
