@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["diode_common", "diode_send", "diode_receive"]
+
+[profile.release]
+lto = true
+codegen-units = 1

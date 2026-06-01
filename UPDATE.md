@@ -16,11 +16,17 @@ To update OpenBSD on the diode, first update the sender. This allows updating al
    ```sh
    pkg_add -u
    ```
+1. Build the binaries:
+   ```sh
+   cd data-diode
+   cargo build --release --features arduino
+   cp -p ./target/release/diode_send /usr/local/bin
+   
+   ```
 1. Check if the sender scripts works as expected:
    ```sh
    rcctl check diode_send
    ```
-
 
 ## Transfer Files through Diode
 
@@ -45,7 +51,6 @@ When the upgrade of ther sender works as expected, all required files can be tra
    version = 7.5
 
    [aarch64]
-   py3-serial = *
    bash = *
    zsh = *
    nano = *
@@ -66,16 +71,15 @@ When the upgrade of ther sender works as expected, all required files can be tra
    ```sh
    merge_files /home/diode/receive/www/pub/OpenBSD/7.5
    ```
-1. To 
-You can similarly transfer/update syspatch and firmware files.
+1. You can similarly transfer/update syspatch and firmware files.
+1. Finally, transfer the newly build diode_receive binary:
+   ```sh
+   cp -p ./target/release/diode_send /home/diode/send/diode_receive-$(date -I)
+   ```
 
 ## Upgrade Receiver
 
 To use this procedure, you first need to set up the receiver Pi as an HTTP mirror, see [INSTALL.md](INSTALL.md).
-
-1. Warning: If the old Python3 version segfaults on the new OpenBSD version, you cannot transfer any addtional files through the diode.
-
-   Validate that the Python3 package with all its dependencies are transferred before starting the upgrade.To see which packages are required, compare the output of `pkg_info` on the sender with the list of packages in the `pub/OpenBSD/$VERSION/packages/aarch64/` directory on the sender.
 
 1. Upgrade to the newest OpenBSD release:
    ```sh
@@ -84,6 +88,12 @@ To use this procedure, you first need to set up the receiver Pi as an HTTP mirro
 1. When the system is available again, upgrade the installed packages:
    ```sh
    pkg_add -u
+   ```
+1. Upgrade the diode_receive binary:
+   ```sh
+   mv /usr/local/bin/diode_receive /usr/local/bin/diode_receive.bak
+   mv /home/diode/www/diode_receive-$(date -I) /usr/local/bin/diode_receive
+   chmod +x /usr/local/bin/diode_receive
    ```
 1. Check if the sender scripts works as expected:
    ```sh

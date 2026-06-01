@@ -64,7 +64,6 @@
 Clone this repo or download the latest .zip file and extract. Then `cd` into the directory.
 
 ## Receiver setup
-1. Install Python3.
 1. Create a user `diode`.
 1. Copy the rc.d file:
    ```
@@ -88,7 +87,6 @@ Clone this repo or download the latest .zip file and extract. Then `cd` into the
    ```
 
 ## Sender setup
-1. Install Python3.
 1. Create a user `diode`:
    ```sh
    adduser diode

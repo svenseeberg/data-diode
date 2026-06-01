@@ -1,0 +1,13 @@
+[package]
+name = "diode-common"
+version = "4.0.0"
+edition = "2024"
+
+[lib]
+name = "diode_common"
+path = "src/lib.rs"
+
+[dependencies]
+log = "0.4"
+md-5 = "0.10"
+syslog = "7"
