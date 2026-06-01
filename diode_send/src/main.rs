@@ -389,6 +389,12 @@ fn walk_files(dir: &Path, results: &mut Vec<PathBuf>) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
+        if let Ok(metadata) = fs::symlink_metadata(&path) {
+            if metadata.file_type().is_symlink() {
+                info!("Skipping symlink: {}", path.display());
+                continue;
+            }
+        }
         if path.is_dir() {
             walk_files(&path, results);
         } else if path.is_file() {
