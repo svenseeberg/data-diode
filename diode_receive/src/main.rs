@@ -92,6 +92,8 @@ struct ReceiveState {
     bytes_buffered: usize,
     failed: bool,
     output: Option<File>,
+    /// Pending file initialization: (path, size, path_hash, parity_per_batch)
+    pending_init: Option<(String, u64, Vec<u8>, u64)>,
 }
 
 impl ReceiveState {
@@ -108,6 +110,7 @@ impl ReceiveState {
             bytes_buffered: 0,
             failed: false,
             output: None,
+            pending_init: None,
         }
     }
 }
@@ -239,6 +242,13 @@ fn open_output_file(output_dir: &Path, rel_path: &str, file_size: u64) -> std::i
     Ok(f)
 }
 
+fn do_pending_init(output_dir: &Path, path: &str, size: u64) -> std::io::Result<File> {
+    let _ = fs::remove_file(output_dir.join(path));
+    let _ = fs::remove_file(partial_path(output_dir, path));
+    let _ = fs::remove_file(output_dir.join(format!("{}.failed", path)));
+    open_output_file(output_dir, path, size)
+}
+
 fn new_file(
     state: &mut ReceiveState,
     stats: &mut Stats,
@@ -262,28 +272,7 @@ fn new_file(
         mark_failure(output_dir, &prev);
         reset_transfer(state, stats, false);
     }
-    let _ = fs::remove_file(output_dir.join(&path));
-    let _ = fs::remove_file(partial_path(output_dir, &path));
-    let _ = fs::remove_file(output_dir.join(format!("{}.failed", path)));
-    let output = match open_output_file(output_dir, &path, size) {
-        Ok(f) => f,
-        Err(e) => {
-            error!("Failed to open output file {}: {}", path, e);
-            stats.files_failed += 1;
-            mark_failure(output_dir, &path);
-            return;
-        }
-    };
-    state.file_path = Some(path.clone());
-    state.path_hash = Some(path_hash);
-    state.file_size = size;
-    state.parity_per_batch = parity_per_batch;
-    state.current_batch = 0;
-    state.output = Some(output);
-    info!(
-        "Receiving file {} (size {}, parity per batch {})",
-        path, size, parity_per_batch
-    );
+    state.pending_init = Some((path, size, path_hash, parity_per_batch));
 }
 
 /// Reconstruct the current batch from buffered data + parity and write it to
@@ -710,7 +699,12 @@ fn main() {
                         parity_per_batch,
                     );
                 }
-                PKG_TYPE_DATA if state_guard.file_path.is_some() => {
+                _ if state_guard.pending_init.is_some() => {
+                    drop(state_guard);
+                    drop(stats_guard);
+                    continue;
+                }
+                PKG_TYPE_DATA if state_guard.file_path.is_some() && state_guard.output.is_some() => {
                     if !state_guard.failed && is_chunk_valid(&packet, &state_guard) {
                         let batch = batch_for_data(packet.count);
                         if batch > state_guard.current_batch {
@@ -721,7 +715,7 @@ fn main() {
                         }
                     }
                 }
-                PKG_TYPE_PARITY if state_guard.file_path.is_some() => {
+                PKG_TYPE_PARITY if state_guard.file_path.is_some() && state_guard.output.is_some() => {
                     if !state_guard.failed && is_chunk_valid(&packet, &state_guard) {
                         let batch = batch_for_parity(packet.count);
                         if batch > state_guard.current_batch {
@@ -743,8 +737,38 @@ fn main() {
                 }
                 _ => {}
             }
+            
+            let pending_init = state_guard.pending_init.take();
             drop(state_guard);
             drop(stats_guard);
+            
+            if let Some((path, size, path_hash, parity_per_batch)) = pending_init {
+                match do_pending_init(&output_dir_worker, &path, size) {
+                    Ok(output) => {
+                        let mut state_guard = state_worker.lock().unwrap();
+                        state_guard.file_path = Some(path.clone());
+                        state_guard.path_hash = Some(path_hash);
+                        state_guard.file_size = size;
+                        state_guard.parity_per_batch = parity_per_batch;
+                        state_guard.current_batch = 0;
+                        state_guard.output = Some(output);
+                        info!(
+                            "Receiving file {} (size {}, parity per batch {})",
+                            path, size, parity_per_batch
+                        );
+                    }
+                    Err(e) => {
+                        error!("Failed to open output file {}: {}", path, e);
+                        let mut state_guard = state_worker.lock().unwrap();
+                        state_guard.failed = true;
+                        state_guard.file_path = Some(path.clone());
+                        state_guard.pending_init = None;
+                        mark_failure(&output_dir_worker, &path);
+                    }
+                }
+                continue;
+            }
+            
             #[cfg(feature = "arduino")]
             {
                 let force = matches!(pkt_type, PKG_TYPE_START | PKG_TYPE_END);
