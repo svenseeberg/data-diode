@@ -230,14 +230,12 @@ fn open_output_file(output_dir: &Path, rel_path: &str, file_size: u64) -> std::i
     if let Some(parent) = full.parent() {
         fs::create_dir_all(parent)?;
     }
+    let _ = fs::remove_file(&full);
     let f = OpenOptions::new()
         .create(true)
         .write(true)
-        .truncate(true)
         .open(&full)?;
-    if file_size > 0 {
-        f.set_len(file_size)?;
-    }
+    let _ = file_size;
     Ok(f)
 }
 
