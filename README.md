@@ -54,11 +54,11 @@ internal network.
 
 Depending on the configured speed, some packets are lost. To mitigate this
 problem, the sender adds Reed-Solomon forward error correction (FEC) parity
-packets after each file (roughly 10% of the data shard count, clamped to a
-sensible range). The receiver buffers data and parity until the end-of-file
-marker arrives, then reconstructs any missing data chunks from the parity
-shards before writing the file. Files exceeding the FEC shard limit are
-sent without parity and a warning is logged.
+packets after every batch of 1000 data chunks (100 parity shards per batch).
+The receiver buffers one batch at a time, reconstructs any missing data
+chunks from the parity shards, and writes the batch to disk as soon as the
+next batch begins. Neither side has to hold a full file in memory, so FEC
+applies regardless of file size.
 
 START and END control packets are transmitted multiple times to survive
 single-packet loss without falling back to FEC.
