@@ -110,7 +110,7 @@ jobs:
 
           ( cd dist && ../target/release/diode_sha256 diode_send diode_receive | tee SHA256SUMS_binaries )
 
-      - name: Lay out package directory (pkg_create -d root)
+      - name: Lay out package directory
         shell: bash
         run: |
           set -euo pipefail
@@ -127,27 +127,54 @@ jobs:
           cp etc/rc.d/diode_receive      "$PKG_ROOT/etc/rc.d/diode_receive"
           chmod 0755 "$PKG_ROOT"/bin/diode_send "$PKG_ROOT"/bin/diode_receive
 
+          # Write the packing-list (one entry per file/dir, relative to
+          # $PKG_ROOT; directories need a trailing slash for pkg_create).
+          ( cd "$PKG_ROOT" && \
+            { find . -mindepth 1 -maxdepth 8 -type d | sed 's|^\./||; s|$|/|'
+              find . -mindepth 1 -maxdepth 8 -type f | sed 's|^\./||'
+            } | sort ) > "dist/PLIST"
+          echo "--- PLIST ---"
+          cat "dist/PLIST"
+
       - name: Package with pkg_create
         shell: bash
         run: |
           set -euo pipefail
           TAG="${{ env.TAG }}"
           VERSION="${TAG#v}"
+          # /usr/sbin (where pkg_create lives) may not be on the default
+          # PATH of a non-interactive shell on the cross-platform OpenBSD
+          # image.
+          command -v pkg_create >/dev/null 2>&1 || export PATH="/usr/sbin:${PATH}"
+
+          # Split the version into a stable version and an optional
+          # rc-revision. packages-specs(7) names are of the form
+          #   pkgname-version  or  pkgname-version-rev
+          # where rev is a single letter followed by an optional number.
+          # 4.0.2      -> version=4.0.2, rev=""
+          # 4.0.2rc3   -> version=4.0.2, rev=rc3
+          if [[ "${VERSION}" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(rc[0-9]+)?$ ]]; then
+            BASE_VERSION="${BASH_REMATCH[1]}"
+            REV="${BASH_REMATCH[2]}"
+          else
+            BASE_VERSION="${VERSION}"
+            REV=""
+          fi
+          PKG_NAME="diode-${BASE_VERSION}${REV:+-${REV}}"
+          echo "PACKAGING ${PKG_NAME}"
 
           mkdir -p dist
-          pkg_create -d dist/package \
-            -c "COMMENT=File-transfer data diode (sender + receiver) for OpenBSD.
-               MAINTAINER=svenseeberg@users.noreply.github.com
-               LICENSE=MIT"
+          pkg_create \
+            -D "COMMENT=File-transfer data diode (sender + receiver) for OpenBSD." \
+            -D "MAINTAINER=${MAINTAINER:=svenseeberg@users.noreply.github.com}" \
+            -f dist/PLIST \
+            -p /usr/local \
+            "${PKG_NAME}"
 
-          # pkg_create names the tgz diode-<version>-<arch>... . Move it
-          # to a known name: diode-<VERSION>.tgz
-          PKG_TGZ=$(ls dist/*.tgz 2>/dev/null | head -n1)
-          if [ -z "${PKG_TGZ}" ]; then
-            echo "FATAL: no .tgz produced by pkg_create in dist/" >&2
-            exit 1
-          fi
-          mv -f "$PKG_TGZ" "dist/diode-$VERSION.tgz"
+          # pkg_create writes <PKG_NAME>.tgz into the current dir.
+          # Move it to dist/diode-<VERSION>.tgz so the GitHub release
+          # asset name keeps the full rc suffix.
+          mv -f "${PKG_NAME}.tgz" "dist/diode-$VERSION.tgz"
           ls -lh dist/
           ( cd dist && ../target/release/diode_sha256 diode-$VERSION.tgz | tee diode-$VERSION.tgz.sha256 )
 
