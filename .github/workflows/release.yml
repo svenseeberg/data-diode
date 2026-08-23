@@ -4,11 +4,6 @@ on:
   push:
     tags:
       - "v*"
-    branches:
-      - master
-      - main
-  pull_request_target:
-    types: [closed]
   workflow_dispatch:
     inputs:
       tag:
@@ -26,14 +21,6 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
     steps:
-      - name: Guard: pull_request_target only into the default branch
-        if: github.event_name == 'pull_request_target' && github.event.pull_request.base.ref != 'master'
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Skipping release: pull_request_target fired against '${{ github.event.pull_request.base.ref }}'; expected 'master'."
-          exit 1
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -44,13 +31,16 @@ jobs:
           OVERRIDE_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          if [ -n "${OVERRIDE_TAG}" ]; then
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # Tag push: the tag *is* the release tag.
+            TAG="${GITHUB_REF_NAME}"
+            echo "Using pushed tag: $TAG"
+          elif [ -n "${OVERRIDE_TAG}" ]; then
             TAG="${OVERRIDE_TAG#refs/tags/}"
             echo "Using override tag: $TAG"
           else
-            # Take the highest vX.Y.Z tag that does not already contain a
-            # pre-release suffix (rc, alpha, beta). That is the last
-            # stable release; the candidate is its minor+1 with rc1.
+            # workflow_dispatch with no tag: derive the next rc from the
+            # highest vX.Y.Z stable tag. (v4.0.1 -> v4.1.0rc1)
             LAST=$(git tag --list 'v*' --sort=-version:refname \
               | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ {print; exit}')
             if [ -z "${LAST}" ]; then
@@ -62,11 +52,8 @@ jobs:
             MAJOR="${V%%.*}"
             REST="${V#*.}"
             MINOR="${REST%%.*}"
-            # Bump the minor, reset the patch, mark as rc1. (4.0.1 -> 4.1.0rc1)
             NEXT_MINOR=$((MINOR + 1))
             BASE="v${MAJOR}.${NEXT_MINOR}.0rc"
-            # If any rcN of this series already exists as a git tag,
-            # continue the series (rc2 after rc1, etc.).
             RC_TAGS=$(git tag --list "${BASE}*" --sort=-version:refname)
             if [ -z "${RC_TAGS}" ]; then
               TAG="${BASE}1"
@@ -94,29 +81,6 @@ jobs:
           shell: bash
           memory: 5G
           cpu_count: 4
-
-      - name: Check tag is not already published
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OVERRIDE_TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-          if gh release view "${TAG}" --repo "${{ github.repository }}" &>/dev/null; then
-            if [ -n "${OVERRIDE_TAG}" ]; then
-              echo "Tag ${TAG} is already published. Re-run with the next rcN in the series to publish a fresh candidate." >&2
-              exit 1
-            fi
-            [[ "${TAG}" == *rc* ]] || {
-              echo "Tag ${TAG} is already published and is not an rc; refusing to silently clobber." >&2
-              exit 1
-            }
-            BASE="${TAG%rc*}"
-            N="${TAG##*rc}"
-            N=$((N + 1))
-            TAG="${BASE}rc${N}"
-            echo "Existing release found; using next rc: ${TAG}"
-            echo "TAG=${TAG}" >> "$GITHUB_ENV"
-          fi
 
       - name: Install Rust toolchain (native)
         shell: bash
@@ -235,8 +199,9 @@ jobs:
           ( cd dist && ls -lh; sha256_sum * 2>/dev/null | tee SHA256SUMS )
 
           if gh release view "$TAG" --repo "${{ github.repository }}" &>/dev/null; then
-            # An earlier commit to the same branch already created this
-            # release; refresh its assets.
+            # The tag was already cut earlier (a re-push of the same tag,
+            # or a re-run of workflow_dispatch for the same tag). Refresh
+            # the assets in place.
             gh release upload "$TAG" \
               --repo "${{ github.repository }}" \
               --clobber \
@@ -246,12 +211,13 @@ jobs:
               dist/diode-$VERSION.tgz.sha256 \
               dist/SHA256SUMS
           else
-            # gh release create requires the tag to exist at this commit
-            # in the remote. On non-tag triggers (master push, PR merge)
-            # we create the tag at HEAD and push it; on tag pushes the
-            # tag is already pointing here.
-            git tag -f "${TAG}"
-            git push -f origin "${TAG}"
+            # Tag-push: the tag already points at this commit in the
+            # remote. workflow_dispatch: the tag may not exist yet, in
+            # which case create it at HEAD and push it.
+            if ! git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
+              git tag -f "${TAG}"
+              git push -f origin "${TAG}"
+            fi
             # shellcheck disable=SC2086
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
