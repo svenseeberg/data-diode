@@ -1,0 +1,267 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+    branches:
+      - master
+      - main
+  pull_request_target:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Explicit tag to release (overrides auto-derivation)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-openbsd-arm64:
+    name: Build OpenBSD arm64 package
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Guard: pull_request_target only into the default branch
+        if: github.event_name == 'pull_request_target' && github.event.pull_request.base.ref != 'master'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Skipping release: pull_request_target fired against '${{ github.event.pull_request.base.ref }}'; expected 'master'."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine release tag
+        env:
+          OVERRIDE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -n "${OVERRIDE_TAG}" ]; then
+            TAG="${OVERRIDE_TAG#refs/tags/}"
+            echo "Using override tag: $TAG"
+          else
+            # Take the highest vX.Y.Z tag that does not already contain a
+            # pre-release suffix (rc, alpha, beta). That is the last
+            # stable release; the candidate is its minor+1 with rc1.
+            LAST=$(git tag --list 'v*' --sort=-version:refname \
+              | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ {print; exit}')
+            if [ -z "${LAST}" ]; then
+              echo "FATAL: no vX.Y.Z stable tags found in this repository." >&2
+              exit 1
+            fi
+            echo "Last stable tag: $LAST"
+            V="${LAST#v}"
+            MAJOR="${V%%.*}"
+            REST="${V#*.}"
+            MINOR="${REST%%.*}"
+            # Bump the minor, reset the patch, mark as rc1. (4.0.1 -> 4.1.0rc1)
+            NEXT_MINOR=$((MINOR + 1))
+            BASE="v${MAJOR}.${NEXT_MINOR}.0rc"
+            # If any rcN of this series already exists as a git tag,
+            # continue the series (rc2 after rc1, etc.).
+            RC_TAGS=$(git tag --list "${BASE}*" --sort=-version:refname)
+            if [ -z "${RC_TAGS}" ]; then
+              TAG="${BASE}1"
+            else
+              HIGHEST_RC=$(echo "${RC_TAGS}" | head -n1)
+              N="${HIGHEST_RC#*rc}"
+              if ! [[ "${N}" =~ ^[0-9]+$ ]]; then
+                echo "FATAL: could not parse rc number from '${HIGHEST_RC}'." >&2
+                exit 1
+              fi
+              TAG="${BASE}$((N + 1))"
+              echo "Existing rc series: ${RC_TAGS// /, }"
+            fi
+            echo "Using auto-derived tag: $TAG"
+          fi
+          echo "TAG=${TAG}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=${TAG}"
+
+      - name: Start OpenBSD arm64 VM
+        uses: cross-platform-actions/action@v1.4.0
+        with:
+          operating_system: openbsd
+          architecture: arm64
+          version: "7.9"
+          shell: bash
+          memory: 5G
+          cpu_count: 4
+
+      - name: Check tag is not already published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OVERRIDE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "${TAG}" --repo "${{ github.repository }}" &>/dev/null; then
+            if [ -n "${OVERRIDE_TAG}" ]; then
+              echo "Tag ${TAG} is already published. Re-run with the next rcN in the series to publish a fresh candidate." >&2
+              exit 1
+            fi
+            [[ "${TAG}" == *rc* ]] || {
+              echo "Tag ${TAG} is already published and is not an rc; refusing to silently clobber." >&2
+              exit 1
+            }
+            BASE="${TAG%rc*}"
+            N="${TAG##*rc}"
+            N=$((N + 1))
+            TAG="${BASE}rc${N}"
+            echo "Existing release found; using next rc: ${TAG}"
+            echo "TAG=${TAG}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install Rust toolchain (native)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v cargo >/dev/null 2>&1; then
+            cargo --version
+            exit 0
+          fi
+          pkg_add -u cargo
+          cargo --version
+
+      - name: Build release binaries (receiver with arduino)
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          cargo build --release --package diode-receive --features arduino
+          cargo build --release --package diode-send
+          ls -lh target/release/diode_send target/release/diode_receive
+
+          # Stage bare binaries for the GitHub release.
+          mkdir -p dist
+          cp target/release/diode_send    dist/diode_send
+          cp target/release/diode_receive dist/diode_receive
+          chmod 0755 dist/diode_send dist/diode_receive
+
+          ( cd dist && sha256_sum diode_send diode_receive | tee SHA256SUMS_binaries )
+
+      - name: Lay out package directory (pkg_create -d root)
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG_ROOT=dist/package
+          rm -rf "$PKG_ROOT"
+          mkdir -p "$PKG_ROOT/bin" "$PKG_ROOT/usr/local/share/doc/diode"
+          mkdir -p "$PKG_ROOT/etc/rc.d"
+
+          cp target/release/diode_send    "$PKG_ROOT/bin/diode_send"
+          cp target/release/diode_receive "$PKG_ROOT/bin/diode_receive"
+          cp README.md                   "$PKG_ROOT/usr/local/share/doc/diode/README.md"
+          cp LICENSE                     "$PKG_ROOT/usr/local/share/doc/diode/LICENSE"
+          cp etc/rc.d/diode_send         "$PKG_ROOT/etc/rc.d/diode_send"
+          cp etc/rc.d/diode_receive      "$PKG_ROOT/etc/rc.d/diode_receive"
+          chmod 0755 "$PKG_ROOT"/bin/diode_send "$PKG_ROOT"/bin/diode_receive
+
+      - name: Package with pkg_create
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ env.TAG }}"
+          VERSION="${TAG#v}"
+
+          mkdir -p dist
+          pkg_create -d dist/package \
+            -c "COMMENT=File-transfer data diode (sender + receiver) for OpenBSD.
+               MAINTAINER=svenseeberg@users.noreply.github.com
+               LICENSE=MIT"
+
+          # pkg_create names the tgz diode-<version>-<arch>... . Move it
+          # to a known name: diode-<VERSION>.tgz
+          PKG_TGZ=$(ls dist/*.tgz 2>/dev/null | head -n1)
+          if [ -z "${PKG_TGZ}" ]; then
+            echo "FATAL: no .tgz produced by pkg_create in dist/" >&2
+            exit 1
+          fi
+          mv -f "$PKG_TGZ" "dist/diode-$VERSION.tgz"
+          ls -lh dist/
+          ( cd dist && sha256_sum diode-$VERSION.tgz | tee diode-$VERSION.tgz.sha256 )
+
+      - name: Create GitHub release and upload assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ env.TAG }}"
+          VERSION="${TAG#v}"
+          PRERELEASE=""
+          [[ "${VERSION}" == *rc* ]] && PRERELEASE="--prerelease"
+
+          {
+            echo "OpenBSD arm64 package for the data diode (sender + receiver)."
+            echo ""
+            if [[ "${VERSION}" == *rc* ]]; then
+              echo "_This is a **release candidate** (rc) on the way to the next
+              stable release. Feedback is welcome._"
+              echo ""
+            fi
+            echo "## Install"
+            echo ""
+            echo "~~~"
+            echo "pkg_add https://github.com/${{ github.repository }}/releases/download/$TAG/diode-$VERSION.tgz"
+            echo "~~~"
+            echo ""
+            echo "Installs `diode_send` and `diode_receive` and the matching `rc.d`"
+            echo "scripts under `/etc/rc.d/`. Enable them with"
+            echo "`rcctl enable diode_send` / `rcctl enable diode_receive` and edit"
+            echo "the flags (directory, target subnet/port) to fit your setup."
+            echo ""
+            echo "## Alternative: bare binaries (OpenBSD arm64)"
+            echo ""
+            echo "If you prefer not to use `pkg_add`, the release also ships the two"
+            echo "native binaries:"
+            echo ""
+            echo "~~~"
+            echo "curl -LO https://github.com/${{ github.repository }}/releases/download/$TAG/diode_send"
+            echo "curl -LO https://github.com/${{ github.repository }}/releases/download/$TAG/diode_receive"
+            echo "install -m 0755 diode_send    /usr/local/bin/diode_send"
+            echo "install -m 0755 diode_receive /usr/local/bin/diode_receive"
+            echo "~~~"
+            echo ""
+          } > dist/release-notes.md
+
+          # Aggregate sha256 manifest for the whole asset set.
+          ( cd dist && ls -lh; sha256_sum * 2>/dev/null | tee SHA256SUMS )
+
+          if gh release view "$TAG" --repo "${{ github.repository }}" &>/dev/null; then
+            # An earlier commit to the same branch already created this
+            # release; refresh its assets.
+            gh release upload "$TAG" \
+              --repo "${{ github.repository }}" \
+              --clobber \
+              dist/diode_send \
+              dist/diode_receive \
+              dist/diode-$VERSION.tgz \
+              dist/diode-$VERSION.tgz.sha256 \
+              dist/SHA256SUMS
+          else
+            # gh release create requires the tag to exist at this commit
+            # in the remote. On non-tag triggers (master push, PR merge)
+            # we create the tag at HEAD and push it; on tag pushes the
+            # tag is already pointing here.
+            git tag -f "${TAG}"
+            git push -f origin "${TAG}"
+            # shellcheck disable=SC2086
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "${TAG}" \
+              ${PRERELEASE} \
+              --notes-file dist/release-notes.md \
+              dist/diode_send \
+              dist/diode_receive \
+              dist/diode-$VERSION.tgz \
+              dist/diode-$VERSION.tgz.sha256 \
+              dist/SHA256SUMS
+          fi
+          gh release view "$TAG" --repo "${{ github.repository }}" || true
