@@ -136,22 +136,35 @@ jobs:
           echo "--- PLIST ---"
           cat "dist/PLIST"
 
+      - name: Locate pkg_create
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "PATH=${PATH}"
+          echo "---"
+          command -v pkg_create && echo "command -v: $?" || echo "command -v: NOT FOUND (rc=$?)"
+          echo "---"
+          for d in /usr/sbin /usr/bin /sbin /bin /usr/local/sbin /usr/local/bin; do
+            if [ -x "${d}/pkg_create" ]; then
+              echo "FOUND: ${d}/pkg_create"
+              file "${d}/pkg_create" 2>/dev/null || echo "(no file(1))"
+              "${d}/pkg_create" --help 2>&1 | head -3 || true
+              break
+            fi
+          done
+          echo "---"
+          # Fallback: use the canonical location directly.
+          export PATH="/usr/sbin:${PATH}"
+          command -v pkg_create && echo "after PATH fix: ${PKG_CREATE:-$(command -v pkg_create)}" || \
+            { echo "FATAL: pkg_create not found even after PATH fix" >&2; exit 1; }
+
       - name: Package with pkg_create
         shell: bash
         run: |
           set -euo pipefail
           TAG="${{ env.TAG }}"
           VERSION="${TAG#v}"
-          # /usr/sbin (where pkg_create lives) may not be on the default
-          # PATH of a non-interactive shell on the cross-platform OpenBSD
-          # image.
-          command -v pkg_create >/dev/null 2>&1 || export PATH="/usr/sbin:${PATH}"
-
-          # Split the version into a stable version and an optional
-          # rc-revision. packages-specs(7) names are of the form
-          #   pkgname-version  or  pkgname-version-rev
-          # where rev is a single letter followed by an optional number.
-          # 4.0.2      -> version=4.0.2, rev=""
+          # 4.0.2      -> version=4.0.2
           # 4.0.2rc3   -> version=4.0.2, rev=rc3
           if [[ "${VERSION}" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(rc[0-9]+)?$ ]]; then
             BASE_VERSION="${BASH_REMATCH[1]}"
