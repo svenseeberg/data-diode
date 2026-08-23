@@ -110,61 +110,13 @@ jobs:
 
           ( cd dist && ../target/release/diode_sha256 diode_send diode_receive | tee SHA256SUMS_binaries )
 
-      - name: Lay out package directory
-        shell: bash
-        run: |
-          set -euo pipefail
-          PKG_ROOT=dist/package
-          rm -rf "$PKG_ROOT"
-          mkdir -p "$PKG_ROOT/bin" "$PKG_ROOT/usr/local/share/doc/diode"
-          mkdir -p "$PKG_ROOT/etc/rc.d"
-
-          cp target/release/diode_send    "$PKG_ROOT/bin/diode_send"
-          cp target/release/diode_receive "$PKG_ROOT/bin/diode_receive"
-          cp README.md                   "$PKG_ROOT/usr/local/share/doc/diode/README.md"
-          cp LICENSE                     "$PKG_ROOT/usr/local/share/doc/diode/LICENSE"
-          cp etc/rc.d/diode_send         "$PKG_ROOT/etc/rc.d/diode_send"
-          cp etc/rc.d/diode_receive      "$PKG_ROOT/etc/rc.d/diode_receive"
-          chmod 0755 "$PKG_ROOT"/bin/diode_send "$PKG_ROOT"/bin/diode_receive
-
-          # Write the packing-list (one entry per file/dir, relative to
-          # $PKG_ROOT; directories need a trailing slash for pkg_create).
-          ( cd "$PKG_ROOT" && \
-            { find . -mindepth 1 -maxdepth 8 -type d | sed 's|^\./||; s|$|/|'
-              find . -mindepth 1 -maxdepth 8 -type f | sed 's|^\./||'
-            } | sort ) > "dist/PLIST"
-          echo "--- PLIST ---"
-          cat "dist/PLIST"
-
-      - name: Locate pkg_create
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "PATH=${PATH}"
-          echo "---"
-          command -v pkg_create && echo "command -v: $?" || echo "command -v: NOT FOUND (rc=$?)"
-          echo "---"
-          for d in /usr/sbin /usr/bin /sbin /bin /usr/local/sbin /usr/local/bin; do
-            if [ -x "${d}/pkg_create" ]; then
-              echo "FOUND: ${d}/pkg_create"
-              file "${d}/pkg_create" 2>/dev/null || echo "(no file(1))"
-              "${d}/pkg_create" --help 2>&1 | head -3 || true
-              break
-            fi
-          done
-          echo "---"
-          # Fallback: use the canonical location directly.
-          export PATH="/usr/sbin:${PATH}"
-          command -v pkg_create && echo "after PATH fix: ${PKG_CREATE:-$(command -v pkg_create)}" || \
-            { echo "FATAL: pkg_create not found even after PATH fix" >&2; exit 1; }
-
-      - name: Package with pkg_create
+      - name: Build OpenBSD package (tar + gzip)
         shell: bash
         run: |
           set -euo pipefail
           TAG="${{ env.TAG }}"
           VERSION="${TAG#v}"
-          # 4.0.2      -> version=4.0.2
+          # 4.0.2      -> version=4.0.2, rev=""
           # 4.0.2rc3   -> version=4.0.2, rev=rc3
           if [[ "${VERSION}" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(rc[0-9]+)?$ ]]; then
             BASE_VERSION="${BASH_REMATCH[1]}"
@@ -176,19 +128,74 @@ jobs:
           PKG_NAME="diode-${BASE_VERSION}${REV:+-${REV}}"
           echo "PACKAGING ${PKG_NAME}"
 
-          mkdir -p dist
-          pkg_create \
-            -D "COMMENT=File-transfer data diode (sender + receiver) for OpenBSD." \
-            -D "MAINTAINER=${MAINTAINER:=svenseeberg@users.noreply.github.com}" \
-            -f dist/PLIST \
-            -p /usr/local \
-            "${PKG_NAME}"
+          # The OpenBSD package format (package(5)) is a tar+gzip archive
+          # whose *first* entry is the packing-list ($PKG_NAME+CONTENTS)
+          # and whose *second* entry is the metadata ($PKG_NAME+COMMENT).
+          # pkg_add(1) reads those two first, then extracts the rest of
+          # the archive (the payload) into the destination. The
+          # cross-platform OpenBSD image we build on does not ship
+          # pkg_create, so we assemble the archive with tar(1) + gzip(1)
+          # and emit the +CONTENTS / +COMMENT entries ourselves.
+          #
+          # The result is an *unsigned* package; the end-user installs
+          # it with `pkg_add -D unsigned <file.tgz>` (or via
+          # TRUSTED_PKG_PATH).
+          STAGE=dist/package-stage
+          rm -rf "$STAGE"
+          mkdir -p \
+            "$STAGE/usr/local/bin" \
+            "$STAGE/usr/local/etc/rc.d" \
+            "$STAGE/usr/local/usr/local/share/doc/diode"
 
-          # pkg_create writes <PKG_NAME>.tgz into the current dir.
-          # Move it to dist/diode-<VERSION>.tgz so the GitHub release
-          # asset name keeps the full rc suffix.
-          mv -f "${PKG_NAME}.tgz" "dist/diode-$VERSION.tgz"
+          cp target/release/diode_send    "$STAGE/usr/local/bin/diode_send"
+          cp target/release/diode_receive "$STAGE/usr/local/bin/diode_receive"
+          cp etc/rc.d/diode_send          "$STAGE/usr/local/etc/rc.d/diode_send"
+          cp etc/rc.d/diode_receive       "$STAGE/usr/local/etc/rc.d/diode_receive"
+          cp README.md  "$STAGE/usr/local/usr/local/share/doc/diode/README.md"
+          cp LICENSE    "$STAGE/usr/local/usr/local/share/doc/diode/LICENSE"
+          chmod 0755 "$STAGE/usr/local/bin/diode_send" \
+                    "$STAGE/usr/local/bin/diode_receive"
+          chmod 0644 "$STAGE/usr/local/etc/rc.d/diode_send" \
+                    "$STAGE/usr/local/etc/rc.d/diode_receive" \
+                    "$STAGE/usr/local/usr/local/share/doc/diode/README.md" \
+                    "$STAGE/usr/local/usr/local/share/doc/diode/LICENSE"
+
+          # +COMMENT: metadata shown by pkg_info. Multiple COMMENT=
+          # entries are allowed; the first is the short description.
+          {
+            echo "COMMENT=File-transfer data diode (sender + receiver) for OpenBSD arm64."
+            echo "COMMENT=Installs diode_send and diode_receive plus matching rc.d scripts."
+            echo "MAINTAINER=${MAINTAINER:-svenseeberg@users.noreply.github.com}"
+          } > "$STAGE/${PKG_NAME}+COMMENT"
+
+          # +CONTENTS: one line per file/directory in the payload,
+          # relative to the archive root (which pkg_add treats as the
+          # target prefix /). Directories end with a trailing slash.
+          ( cd "$STAGE" && \
+            { find . -mindepth 1 -maxdepth 8 -type d | sed 's|^\./||; s|$|/|'
+              find . -mindepth 1 -maxdepth 8 -type f | sed 's|^\./||'
+            } | LC_ALL=C sort \
+              | grep -vE "^\+?$|^${PKG_NAME}\+" ) \
+            > "$STAGE/${PKG_NAME}+CONTENTS"
+          echo "--- +CONTENTS ---"
+          cat "$STAGE/${PKG_NAME}+CONTENTS"
+          echo "--- +COMMENT ---"
+          cat "$STAGE/${PKG_NAME}+COMMENT"
+
+          # Build the tgz. The two meta entries MUST be the first members
+          # in the archive (package(5)).
+          ( cd "$STAGE" && \
+            tar -c \
+              "${PKG_NAME}+CONTENTS" \
+              "${PKG_NAME}+COMMENT" \
+              usr \
+            | gzip -9 > "../${PKG_NAME}.tgz" )
+          mkdir -p dist
+          mv -f "dist/${PKG_NAME}.tgz" "dist/diode-$VERSION.tgz"
+
           ls -lh dist/
+          echo "--- archive listing ---"
+          tar -tzf "dist/diode-$VERSION.tgz"
           ( cd dist && ../target/release/diode_sha256 diode-$VERSION.tgz | tee diode-$VERSION.tgz.sha256 )
 
       - name: Create GitHub release and upload assets
@@ -212,8 +219,19 @@ jobs:
             fi
             echo "## Install"
             echo ""
+            echo "The package is unsigned, so pass `-D unsigned` once (or add"
+            echo "`/etc/signify` trust via `TRUSTED_PKG_PATH`):"
+            echo ""
             echo "~~~"
-            echo "pkg_add https://github.com/${{ github.repository }}/releases/download/$TAG/diode-$VERSION.tgz"
+            echo "fetch -o /tmp/diode.tgz \\"
+            echo "  https://github.com/${{ github.repository }}/releases/download/$TAG/diode-$VERSION.tgz"
+            echo "pkg_add -D unsigned /tmp/diode.tgz"
+            echo "~~~"
+            echo ""
+            echo "Or from `pkg_add`'s remote form:"
+            echo ""
+            echo "~~~"
+            echo "pkg_add -D unsigned https://github.com/${{ github.repository }}/releases/download/$TAG/diode-$VERSION.tgz"
             echo "~~~"
             echo ""
             echo "Installs `diode_send` and `diode_receive` and the matching `rc.d`"
