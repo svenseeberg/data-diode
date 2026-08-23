@@ -7,6 +7,10 @@ edition = "2024"
 name = "diode_receive"
 path = "src/main.rs"
 
+[[bin]]
+name = "diode_sha256"
+path = "src/sha256.rs"
+
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 log = "0.4"

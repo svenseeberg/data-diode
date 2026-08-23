@@ -108,7 +108,7 @@ jobs:
           cp target/release/diode_receive dist/diode_receive
           chmod 0755 dist/diode_send dist/diode_receive
 
-          ( cd dist && sha256 diode_send diode_receive | tee SHA256SUMS_binaries )
+          ( cd dist && ../target/release/diode_sha256 diode_send diode_receive | tee SHA256SUMS_binaries )
 
       - name: Lay out package directory (pkg_create -d root)
         shell: bash
@@ -149,7 +149,7 @@ jobs:
           fi
           mv -f "$PKG_TGZ" "dist/diode-$VERSION.tgz"
           ls -lh dist/
-          ( cd dist && sha256 diode-$VERSION.tgz | tee diode-$VERSION.tgz.sha256 )
+          ( cd dist && ../target/release/diode_sha256 diode-$VERSION.tgz | tee diode-$VERSION.tgz.sha256 )
 
       - name: Create GitHub release and upload assets
         shell: bash
@@ -196,7 +196,7 @@ jobs:
           } > dist/release-notes.md
 
           # Aggregate sha256 manifest for the whole asset set.
-          ( cd dist && ls -lh; sha256 * 2>/dev/null | tee SHA256SUMS )
+          ( cd dist && ls -lh; ../target/release/diode_sha256 * 2>/dev/null | tee SHA256SUMS )
 
           if gh release view "$TAG" --repo "${{ github.repository }}" &>/dev/null; then
             # The tag was already cut earlier (a re-push of the same tag,
