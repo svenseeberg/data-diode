@@ -1,11 +1,23 @@
 [Unit]
-Description=Data receiving daemon for data diode
-After=multi-user.target
+Description=Data diode sender (online / external side)
+After=network.target
 
 [Service]
-Type=idle
-ExecStart=/usr/local/bin/diode_send --directory /var/www/diode --device /dev/ttyUSB0
-User=root
+Type=simple
+User=diode
+Group=diode
+ExecStart=/usr/local/bin/diode_send --directory /home/diode/send
+Restart=on-failure
+RestartSec=2
+# To forward UDP arriving on 127.0.0.1:9001 through the diode add
+# `--udp-port 9001 --udp-host 127.0.0.1` to ExecStart. To tune pacing
+# add `--target-bitrate-mbps 90`.
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/diode/send
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

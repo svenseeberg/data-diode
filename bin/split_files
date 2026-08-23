@@ -1,14 +1,93 @@
 #!/bin/sh
-# Create checksums of original files, then split large source files in place and remove original
+# Create SHA256 manifest, then split large source files in place.
+#
+# This script is POSIX-sh compatible (OpenBSD /bin/sh, dash, bash in sh
+# mode, ...). It is the tool used by the documented OpenBSD update flow
+# (UPDATE.md) to break files bigger than 10 MB into fixed-size chunks before
+# pushing them through the diode — large transfers over the wire are more
+# error-prone than many small ones, and a single bad batch only re-sends that
+# batch.
+#
+# The original version of this script had a real bug: it used
+# `sha256 $FILES` where `$FILES` was the output of a word-split `find`, so
+# any filename with spaces or tabs produced a corrupt manifest. We fix it
+# here with `find -exec ... {} +`, which passes each path as a separate argv
+# element to `sha256` without any IFS-based splitting.
 
-FILES=$(find "$1" -type f)
-if [ ! -f /tmp/foo.txt ]; then
-    sha256 $FILES > $1/SHA256
+set -u
+
+if [ "$#" -ne 1 ]; then
+    echo "usage: $0 <dir>" 1>&2
+    exit 2
 fi
 
-FILES=$(find "$1" -type f -size +10485760c)
-print -- "$FILES" | while IFS= read -r FILENAME; do
-    targetdir=$(dirname "$FILENAME")
-    split -b 10m "$FILENAME" "${targetdir}/${FILENAME##*/}_chunk_"
-    rm "$FILENAME"
-done
+DIR=$1
+if [ ! -d "$DIR" ]; then
+    echo "error: $DIR is not a directory" 1>&2
+    exit 2
+fi
+
+MANIFEST=$DIR/SHA256
+
+# Pick a SHA-256 command. OpenBSD ships `sha256`; Linux/GNU coreutils ships
+# `sha256sum` (no bare `sha256`). Both emit the same POSIX
+# "two-space <hex>  <path>" line format, so the manifest is portable.
+# `sha256sum` needs `--` before its file list so a path like `-foo` is not
+# parsed as an option. If neither is present we fail before writing anything.
+SHA256_CMD=
+if command -v sha256 >/dev/null 2>&1; then
+    SHA256_CMD="sha256"
+    SHA256_OPTS=""
+elif command -v sha256sum >/dev/null 2>&1; then
+    SHA256_CMD="sha256sum"
+    SHA256_OPTS="--"
+else
+    echo "error: neither 'sha256' nor 'sha256sum' found in PATH" 1>&2
+    exit 1
+fi
+
+# 1. Write the SHA256 manifest. We never overwrite an existing manifest on
+#    re-run, so a second pass after a partial split does not invalidate the
+#    checksums that were already recorded for the original (pre-split) files.
+#
+#    The manifest is written to a temp file and moved into place only if
+#    the hash command succeeded on *every* file. This way an I/O error (e.g.
+#    a file that vanished between the `find` scan and the hash) leaves no
+#    manifest or an unmodified prior one — never a silent, partial manifest
+#    that merge_files would treat as authoritative.
+if [ ! -f "$MANIFEST" ]; then
+    TMP_MANIFEST=$MANIFEST.tmp.$$
+    trap 'rm -f "$TMP_MANIFEST"' EXIT
+    : > "$TMP_MANIFEST"
+    if ! find "$DIR" -type f ! -name 'SHA256' ! -name 'SHA256.tmp.*' \
+            -exec /bin/sh -c 'set -u; cmd="$1"; shift; opts="$1"; shift; for f in "$@"; do if [ -n "$opts" ]; then "$cmd" "$opts" "$f"; else "$cmd" "$f"; fi; done' _ "$SHA256_CMD" "$SHA256_OPTS" {} + >> "$TMP_MANIFEST"; then
+        echo "error: sha256 manifest generation failed; no manifest written" 1>&2
+        rm -f "$TMP_MANIFEST"
+        trap - EXIT
+        exit 1
+    fi
+    mv "$TMP_MANIFEST" "$MANIFEST"
+    trap - EXIT
+fi
+
+# 2. Split every file bigger than 10 MB in place. The original name is
+#    preserved as the base of the chunk files (`<name>_chunk_aa`, `...ab`),
+#    so merge_files can locate them again.
+SPLIT_THRESHOLD=10485760
+find "$DIR" -type f -size +${SPLIT_THRESHOLD}c \
+    -exec /bin/sh -c '
+        set -u
+        for f in "$@"; do
+            # Symlinks are not split; just skip so the manifest stays intact.
+            if [ -L "$f" ]; then
+                echo "info: skipping symlink: $f" >&2
+                continue
+            fi
+            dir=$(dirname "$f")
+            base=${f##*/}
+            split -b 10m "$f" "${dir}/${base}_chunk_"
+            rm -f "$f"
+        done
+    ' _ {} +
+
+echo "done: $DIR"

@@ -76,10 +76,21 @@ Configuration file `etc/openbsd-mirror.conf` tracks which packages to download v
 
 ## Key Technical Details
 
-- **Chunk size:** 940 bytes, batched in groups of 100 packets
-- **Resend logic:** Each batch sent twice to mitigate packet loss
-- **Hash verification:** MD5 used for file integrity
-- **Logging:** Dual console + syslog output
+- **Chunk size:** 940 bytes, batched in groups of 1000 data packets per FEC
+  batch (see `BATCH_DATA_CHUNKS` / `BATCH_PARITY_CHUNKS` in `diode_common`).
+- **FEC:** 100 Reed-Solomon parity shards per 1000 data chunks. The receiver
+  reconstructs lost data chunks from parity.
+- **Control-packet resend:** START and END are retransmitted 3 times; UDP
+  forward chunks are retransmitted 2 times as a whole flow.
+- **Hash verification:** MD5 (`md-5`) on the wire for per-chunk integrity.
+  The receiver additionally computes a SHA-256 of the finalized output file
+  and logs it (see `finish_file` in `diode_receive/src/main.rs`). Use that
+  digest for any consumer-side integrity check. (`bin/merge_files` performs
+  a SHA-256 verification step against the manifest produced by
+  `bin/split_files`.)
+- **Logging:** Dual console + syslog output. Strings that come from remote
+  START payloads are run through `log_safe()` before being interpolated
+  into a `log::!` macro — do not bypass that guard.
 
 ## Hardware Notes
 

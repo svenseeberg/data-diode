@@ -1,11 +1,25 @@
 [Unit]
-Description=Data transmitting daemon for data diode
-After=multi-user.target
+Description=Data diode receiver (air-gapped / internal side)
+After=network.target
 
 [Service]
-Type=idle
-ExecStart=/usr/local/bin/diode_receive --directory /var/www/diode --device /dev/ttyUSB0 --arduino /dev/ttyUSB1
-User=root
+Type=simple
+User=diode
+Group=diode
+ExecStart=/usr/local/bin/diode_receive --directory /home/diode/receive
+Restart=on-failure
+RestartSec=2
+# If you built with the `arduino` feature and have an LCD on ttyUSB1,
+# append `--arduino /dev/ttyUSB1` to ExecStart. To forward UDP through
+# the diode add `--udp-target-ip 10.0.0.99 --udp-target-port 9000`.
+# LimitNOFILE is generous so the listener buffer can be tuned.
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/diode/receive
+PrivateTmp=true
+PrivateDevices=true
 
 [Install]
 WantedBy=multi-user.target

@@ -1,6 +1,7 @@
 //! Wire-format constants and helpers shared between the sender and receiver.
 
 use std::io::Write;
+use std::path::{Component, Path};
 
 /// Maximum data payload per packet (before FEC padding).
 pub const CHUNK_SIZE: usize = 940;
@@ -79,4 +80,62 @@ pub fn encode_parity_field(parity_count: u64) -> String {
 /// valid ASCII decimal integer.
 pub fn decode_parity_field(bytes: &[u8]) -> Option<u64> {
     std::str::from_utf8(bytes).ok()?.parse::<u64>().ok()
+}
+
+/// Hard cap, in bytes, on a single reassembled UDP payload that the receiver
+/// will accumulate while waiting for the final chunk of a flow.
+///
+/// The sender's forwarder uses 64 KB of buffer for a single external UDP
+/// datagram, so any legitimate flow is bounded well below this value. Anything
+/// larger is almost certainly an adversarial "size" field and is dropped.
+pub const UDP_MAX_FORWARD_BYTES: usize = 4 * 1024 * 1024;
+
+/// Validate a relative file path that is about to be joined onto an output
+/// directory, and return whether it is safe.
+///
+/// A path is considered unsafe if:
+/// * it is empty,
+/// * it is absolute (starts with `/` or a Windows drive/UNC root),
+/// * it contains any `..` (parent-dir) component — the receiver's directory
+///   tree is expected to be flat, so any `..` at all is rejected,
+/// * it contains any `.` (cur-dir) or root component — rejected to keep the
+///   rule simple and to avoid `a/` vs `a/.` confusion,
+/// * it contains any non-normal component (e.g. a Windows prefix).
+///
+/// A path is safe only if it is non-empty, relative, and consists solely of
+/// `Component::Normal` entries.
+///
+/// Callers should pass the on-the-wire string, not a `PathBuf`, so that
+/// platform-specific path-parsing quirks do not change the verdict.
+pub fn is_safe_rel_path(rel_path: &str) -> bool {
+    if rel_path.is_empty() {
+        return false;
+    }
+    // Absolute or drive-relative paths escape the output directory.
+    if rel_path.starts_with('/') {
+        return false;
+    }
+    // Windows drive / UNC roots. (Not expected on OpenBSD, but reject anyway.)
+    if rel_path.starts_with("\\") {
+        return false;
+    }
+
+    let path = Path::new(rel_path);
+    for comp in path.components() {
+        match comp {
+            // Parent components allow escaping via `..`.
+            Component::ParentDir => return false,
+            // CurDir (`.`) is benign but still reject to keep the rule simple
+            // and so that "a/." == "a" is not a vector for confusion.
+            Component::CurDir => return false,
+            // RootDir already rejected above; belt-and-braces.
+            Component::RootDir => return false,
+            // Normal file/dir name components are fine.
+            Component::Normal(_) => {}
+            // Prefixes (Windows) — reject, since the receiver should never
+            // get one on Unix and it's a sign of malformed input.
+            Component::Prefix(_) => return false,
+        }
+    }
+    true
 }

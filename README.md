@@ -63,16 +63,68 @@ applies regardless of file size.
 START and END control packets are transmitted multiple times to survive
 single-packet loss without falling back to FEC.
 
-To avoid having to re-transmit large files, which in turn is again
+To avoid having to re-transmit large files, which is in turn is again
 error-prone, chunking large files before transmitting is
 possible with the `bin/split_files` script. The `bin/merge_files` script
 can re-assemble the original files on the receiving Pi. The scripts use
 `sha256` to validate the transferred files.
 
-## Security
-There are some serious limitations to the concept of the diode and the
-mystical [air gap](https://cyber.bgu.ac.il/air-gap/). Beyond that all
-security caveats apply.
+## Security model
+
+Basic caveat: There are some serious limitations to the concept of the diode
+and the mystical [air gap](https://cyber.bgu.ac.il/air-gap/).
+
+The receiver is the trust boundary for the air-gapped internal network.
+Because UDP is unauthenticated, *any* sender on the fiber line can reach the
+receiver — both the intended diode-side peer and anyone with physical access
+to the link (or the sender-side NIC). The receiver therefore treats every
+incoming packet as adversarial by default:
+
+1. **Path-traversal rejection.** A START packet names the local file to create.
+   `is_safe_rel_path()` (in `diode_common`) rejects absolute paths, `..`
+   components, NUL bytes and Windows-style roots before the path is joined
+   onto the output directory. Any violation causes the transfer to be dropped
+   and a `.failed` marker to be written.
+2. **Payload-size policy.** DATA chunks must be 1..=CHUNK_SIZE (940 bytes)
+   and PARITY shards must be exactly SHARD_SIZE (960 bytes). Anything else is
+   silently dropped before it reaches the per-batch buffer, which prevents
+   an attacker from forcing the 8 MB batch cap by smuggling 65 KB UDP-sized
+   "data" chunks in.
+3. **UDP-forward cap.** Reassembled UDP payloads are capped at
+   `UDP_MAX_FORWARD_BYTES` (4 MiB). The size field is pinned at flow start
+   so a mid-flow rewrite cannot truncate or extend the reassembled datagram
+   before it reaches the internal host. Flows that exceed the cap or whose
+   fragments do not line up are dropped without being forwarded.
+4. **Per-batch memory cap.** Buffered data + parity is hard-capped at
+   `BUFFER_BYTE_LIMIT` (8 MiB) per batch; the buffer is cleared on batch
+   flip and on reset, and counters use saturating arithmetic so a release-
+   mode overflow cannot wrap into the next allocation.
+5. **Lock-poisoning recovery.** If a handler ever panics while holding the
+   worker mutex (e.g. an OOM in the FEC decoder), the worker recovers the
+   poisoned guard, marks the in-flight transfer as failed, and continues
+   rather than turning one pathological packet into a persistent DoS.
+6. **Log sanitization.** String fields that originate from a remote START
+   payload (chiefly the file path) are sanitized through `log_safe()` before
+   they are interpolated into `log::!` macros, so they cannot inject control
+   characters into a human-readable console or syslog capture.
+7. **Strong integrity digest.** On success, the receiver computes the
+   SHA-256 of the finalized output file and writes it to the log. The
+   per-chunk MD5 on the wire only defeats bit-flips; the digest is what
+   protects against silent FEC reconstruction with attacker-influenced parity
+   shards. `bin/merge_files` independently verifies large reassembled files
+   against the SHA256 manifest written by `bin/split_files`.
+
+The sender-side `diode_send` deletes each file after the END packet has been
+transmitted. If the END is lost (possible: it is retransmitted only 3 times
+and there is no ACK over a diode), there is a narrow window in which the
+sender has deleted a file whose transfer may not have completed at the
+receiver. On loss, the receiver will emit `Failed to rename` and a
+`<name>.failed` marker will appear; the operator then has to re-push the
+file.
+
+The diode as a system remains a physical unidirectional channel, but the
+receiver's input surface is software, and these mitigations assume an
+attacker who can *write* arbitrary bytes to the receiver's UDP socket.
 
 ## Building from source
 The workspace contains three crates: `diode_common` (shared logging, MD5
