@@ -1,23 +1,128 @@
 #!/bin/sh
-# Merge source files in place. Verify merged files and then delete chunks.
+# Reassemble split files in place. Verify the merged file against the SHA256
+# manifest (when present) and only then remove the chunked files.
+#
+# POSIX-sh compatible. Uses `find -exec ... {} +` for the *traversal* so
+# filenames with spaces, tabs, newlines, or leading dashes are handled
+# correctly. The digest comparison is done in a single embedded python
+# invocation so it is portable across shells without quoting hell.
+#
+# Semantics:
+# - A set of files `<base>_chunk_aa`, `<base>_chunk_ab`, ... is `cat`'ed
+#   into `<base>` in lexicographic order (matches `split`'s emission order).
+# - If a SHA256 manifest exists and contains a line whose 2nd field equals
+#   the merged path, sha256 is recomputed and compared. Chunks are removed
+#   only on a digest match.
+# - On mismatch the chunks are kept so the operator can inspect and retry.
 
-FILES=$(find "$1" -type f -name '*_chunk_aa')
+set -u
 
-print -- "$FILES" | while IFS= read -r CHUNKNAME; do
-    FILENAME=$(echo $CHUNKNAME | sed "s/_chunk_aa//")
-    echo "Merging $FILENAME"
-    cat "${FILENAME}_chunk_"* > "$FILENAME"
-done
+if [ "$#" -ne 1 ]; then
+    echo "usage: $0 <dir>" 1>&2
+    exit 2
+fi
 
-FILES=$(find "$1" -type f)
-print -- "$FILES" | while IFS= read -r FILENAME; do
-    case "$FILENAME" in
-        *_chunk_*) continue ;;
-        *SHA256) continue ;;
-        *SHA256.sig) continue ;;
-    esac
-    sha256 -C "$1"/SHA256 "$FILENAME"
-    if [ "$?" == 0 ]; then
-        rm -f "${FILENAME}_chunk_"*
-    fi
-done
+DIR=$1
+if [ ! -d "$DIR" ]; then
+    echo "error: $DIR is not a directory" 1>&2
+    exit 2
+fi
+
+MANIFEST=$DIR/SHA256
+HAVE_MANIFEST=0
+[ -f "$MANIFEST" ] && HAVE_MANIFEST=1
+
+# Step 1: reassemble (POSIX shell — filenames arrive as argv[2..] to the
+# inner shell via `find -exec`, so no word-splitting).
+find "$DIR" -type f -name '*_chunk_aa' \
+    -exec /bin/sh -c '
+        set -u
+        for f in "$@"; do
+            base=${f%_chunk_aa}
+            echo "Merging $base (from $f)"
+            # `cat` only the exact `<base>_chunk_[a-z][a-z]` series produced by
+            # `split`, in lexicographic order. A plain `"$base"_chunk_*` glob
+            # would also sweep in unrelated siblings (e.g.
+            # `<base>_chunk_aa_extra`) and silently corrupt the merge.
+            cat "$base"_chunk_[a-z][a-z] > "$base"
+        done
+    ' _ {} +
+
+# Step 2: verify-and-clean via a single python invocation.
+if [ "$HAVE_MANIFEST" -eq 1 ] && command -v python3 >/dev/null 2>&1; then
+    python3 -c '
+import hashlib, os, sys
+
+d   = sys.argv[1]
+man = sys.argv[2]
+
+# Parse the manifest. POSIX sha256 format: "<hash>  <path>".
+expected = {}
+with open(man, "r", encoding="utf-8", errors="replace") as f:
+    for line in f:
+        line = line.strip()
+        parts = line.split(None, 1)
+        if len(parts) < 2:
+            continue
+        digest, path = parts[0], parts[1].strip()
+        expected[path] = digest
+        expected[os.path.basename(path)] = digest
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fp:
+        for chunk in iter(lambda: fp.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+# Find every <base>_chunk_aa we produced — these are the files we just merged.
+roots = []
+for root, _dirs, files in os.walk(d):
+    for fn in files:
+        if fn.endswith("_chunk_aa"):
+            roots.append(os.path.join(root, fn))
+roots.sort()
+
+fail = False
+for aa in roots:
+    base = aa[: -len("_chunk_aa")]
+    name = os.path.basename(base)
+    # The set of chunk files that belong to this logical file.
+    chunks = sorted(
+        os.path.join(dp, f)
+        for dp, _dirs, files in os.walk(d)
+        for f in files
+        if f.startswith(name + "_chunk_")
+    )
+    exp = expected.get(base)
+    if exp is None:
+        exp = expected.get(name)
+    try:
+        actual = sha256(base)
+    except OSError as e:
+        print("SKIP %s: cannot read %s: %s" % (name, base, e))
+        continue
+    if exp is None:
+        print("INFO %s: no manifest entry; chunks retained" % name)
+        continue
+    if actual == exp:
+        print("OK   %s" % name)
+        for c in chunks:
+            try:
+                os.unlink(c)
+            except OSError:
+                pass
+    else:
+        print("FAIL %s" % name)
+        print("     expected: %s" % exp)
+        print("     actual:   %s" % actual)
+        print("     chunks retained for inspection")
+        fail = True
+sys.exit(1 if fail else 0)
+' "$DIR" "$MANIFEST"
+    ST=$?
+    [ "$ST" -ne 0 ] && echo "merge_files: verification failures; see above" >&2
+    exit "$ST"
+fi
+
+echo "done: $DIR"

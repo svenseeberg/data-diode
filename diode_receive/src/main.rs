@@ -1,13 +1,12 @@
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Seek, SeekFrom, Write};
+use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::net::UdpSocket;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
-#[cfg(feature = "arduino")]
 use std::time::{Duration, Instant};
 
 use clap::Parser;
@@ -17,8 +16,26 @@ use diode_common::hash::md5_hex;
 use diode_common::logging::init_logger;
 use diode_common::proto::{
     BATCH_DATA_CHUNKS, BATCH_PARITY_CHUNKS, CHUNK_SIZE, HEADER_SIZE, PKG_TYPE_DATA, PKG_TYPE_END,
-    PKG_TYPE_PARITY, PKG_TYPE_START, PKG_TYPE_UDP, SHARD_SIZE, decode_parity_field,
+    PKG_TYPE_PARITY, PKG_TYPE_START, PKG_TYPE_UDP, SHARD_SIZE, UDP_MAX_FORWARD_BYTES,
+    decode_parity_field, is_safe_rel_path,
 };
+
+/// Strip non-printable and C0/C1 control bytes before a string originating
+/// from a remote START payload is interpolated into a `log::!` macro (which
+/// feeds both stdout and syslog). Keeps only ASCII graphic characters plus
+/// space and horizontal tab, so newline/carriage-return injection into log
+/// framing is suppressed.
+///
+/// Note: `:` is an ASCII graphic character and is *not* filtered — a remote
+/// payload can still begin with `:`. In classic syslog the severity marker is
+/// `LOG_TAG.severity` (a decimal *number*, not `:`), so a leading `:` is not
+/// a severity-injection vector in practice; the filter's purpose is
+/// controlling log framing, not sanitizing syslog fields.
+fn log_safe(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_graphic() || matches!(c, ' ' | '\t'))
+        .collect()
+}
 
 /// Safety cap on memory held for the current batch. Normal operation uses
 /// far less (~1 MB per batch); this only fires if something is wrong.
@@ -128,12 +145,37 @@ impl Stats {
     }
 }
 
-fn is_chunk_valid(packet: &Packet, state: &ReceiveState) -> bool {
+/// Validate a chunk against the current transfer and the expected payload
+/// length for the packet type. A DATA chunk must be 1..=CHUNK_SIZE bytes and
+/// a PARITY shard must be exactly SHARD_SIZE bytes. Anything else is a
+/// protocol violation and is silently dropped so that an adversarial peer
+/// cannot smuggle oversized payloads (e.g. a 64 KB UDP-sized DATA chunk) into
+/// the per-batch buffer and trigger the 8 MB safety cap or silent FEC
+/// corruption.
+fn is_chunk_valid(packet: &Packet, state: &ReceiveState, pkg_type: u8) -> bool {
     if let Some(ph) = &state.path_hash {
         if &packet.path_hash != ph {
             warn!("Path hash mismatch in chunk {}", packet.count);
             return false;
         }
+    }
+    if pkg_type == PKG_TYPE_DATA && !(1..=CHUNK_SIZE).contains(&packet.data.len()) {
+        warn!(
+            "DATA chunk {} size {} outside 1..={}",
+            packet.count,
+            packet.data.len(),
+            CHUNK_SIZE
+        );
+        return false;
+    }
+    if pkg_type == PKG_TYPE_PARITY && packet.data.len() != SHARD_SIZE {
+        warn!(
+            "PARITY shard {} size {} != SHARD_SIZE ({})",
+            packet.count,
+            packet.data.len(),
+            SHARD_SIZE
+        );
+        return false;
     }
     let expected = md5_hex(&packet.data);
     if expected.as_bytes() != packet.data_hash.as_slice() {
@@ -166,17 +208,23 @@ fn buffer_data(state: &mut ReceiveState, stats: &mut Stats, packet: Packet) {
         return;
     }
     if state.bytes_buffered.saturating_add(packet.data.len()) > BUFFER_BYTE_LIMIT {
+        let prev = state.file_path.as_deref().unwrap_or("?").to_string();
         error!(
-            "Buffer size limit ({} bytes) exceeded for {}",
+            "Data buffer size limit ({} bytes) exceeded for {:?} (safe: {:?})",
             BUFFER_BYTE_LIMIT,
-            state.file_path.as_deref().unwrap_or("?")
+            prev.as_str(),
+            log_safe(&prev)
         );
         state.failed = true;
         return;
     }
-    state.bytes_buffered += packet.data.len();
-    state.bytes_transferred += packet.data.len() as u64;
-    stats.total_transferred += packet.data.len() as u64;
+    state.bytes_buffered = state.bytes_buffered.saturating_add(packet.data.len());
+    state.bytes_transferred = state
+        .bytes_transferred
+        .saturating_add(packet.data.len() as u64);
+    stats.total_transferred = stats
+        .total_transferred
+        .saturating_add(packet.data.len() as u64);
     state.data_buffer.insert(packet.count, packet.data);
 }
 
@@ -185,15 +233,17 @@ fn buffer_parity(state: &mut ReceiveState, packet: Packet, idx_in_batch: u64) {
         return;
     }
     if state.bytes_buffered.saturating_add(packet.data.len()) > BUFFER_BYTE_LIMIT {
+        let prev = state.file_path.as_deref().unwrap_or("?").to_string();
         error!(
-            "Buffer size limit ({} bytes) exceeded for {}",
+            "Parity buffer size limit ({} bytes) exceeded for {:?} (safe: {:?})",
             BUFFER_BYTE_LIMIT,
-            state.file_path.as_deref().unwrap_or("?")
+            prev.as_str(),
+            log_safe(&prev)
         );
         state.failed = true;
         return;
     }
-    state.bytes_buffered += packet.data.len();
+    state.bytes_buffered = state.bytes_buffered.saturating_add(packet.data.len());
     state.parity_buffer.insert(idx_in_batch, packet.data);
 }
 
@@ -201,7 +251,7 @@ fn reset_transfer(state: &mut ReceiveState, stats: &mut Stats, success: bool) {
     if let Some(p) = state.file_path.take() {
         if success {
             stats.files_transferred += 1;
-            info!("Finished receiving {}", p);
+            info!("Finished receiving {:?} (safe: {:?})", p.as_str(), log_safe(&p));
         } else {
             stats.files_failed += 1;
         }
@@ -254,15 +304,30 @@ fn new_file(
         return;
     }
     if state.file_path.is_some() {
+        let prev = state.file_path.clone().unwrap();
         error!(
             "Unfinished previous transfer of {} failed",
-            state.file_path.as_deref().unwrap_or("?")
+            log_safe(&prev)
         );
-        let prev = state.file_path.clone().unwrap();
         state.output.take();
         let _ = fs::remove_file(partial_path(output_dir, &prev));
         mark_failure(output_dir, &prev);
         reset_transfer(state, stats, false);
+    }
+    // Reject any path that would escape the output directory. This blocks
+    // both absolute paths (`/etc/passwd`) and relative traversal
+    // (`../../etc/passwd`) as well as Windows-style / NUL-bearing inputs.
+    if !is_safe_rel_path(&path) {
+        error!("Rejected unsafe START path: {:?} (safe: {:?})", path, log_safe(&path));
+        stats.files_failed += 1;
+        reset_transfer(state, stats, false);
+        return;
+    }
+    if path.contains('\0') {
+        error!("Rejected START path containing NUL: {:?} (safe: {:?})", path, log_safe(&path));
+        stats.files_failed += 1;
+        reset_transfer(state, stats, false);
+        return;
     }
     let _ = fs::remove_file(output_dir.join(&path));
     let _ = fs::remove_file(partial_path(output_dir, &path));
@@ -270,7 +335,7 @@ fn new_file(
     let output = match open_output_file(output_dir, &path, size) {
         Ok(f) => f,
         Err(e) => {
-            error!("Failed to open output file {}: {}", path, e);
+            error!("Failed to open output file {}: {}", log_safe(&path), e);
             stats.files_failed += 1;
             mark_failure(output_dir, &path);
             return;
@@ -284,7 +349,9 @@ fn new_file(
     state.output = Some(output);
     info!(
         "Receiving file {} (size {}, parity per batch {})",
-        path, size, parity_per_batch
+        log_safe(&path),
+        size,
+        parity_per_batch
     );
 }
 
@@ -421,10 +488,12 @@ fn finalize_current_batch(state: &mut ReceiveState) -> Result<(), String> {
 fn advance_to_batch(state: &mut ReceiveState, target_batch: u64) {
     while !state.failed && state.current_batch < target_batch {
         if let Err(e) = finalize_current_batch(state) {
+            let prev = state.file_path.as_deref().unwrap_or("?").to_string();
             error!(
-                "Batch {} finalize failed for {}: {}",
+                "Batch {} finalize failed for {:?} (safe: {:?}): {}",
                 state.current_batch,
-                state.file_path.as_deref().unwrap_or("?"),
+                prev.as_str(),
+                log_safe(&prev),
                 e
             );
             state.failed = true;
@@ -434,15 +503,34 @@ fn advance_to_batch(state: &mut ReceiveState, target_batch: u64) {
     }
 }
 
+fn sha256_file(path: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let file = File::open(path).map_err(|e| format!("open {}: {}", path.display(), e))?;
+    let mut reader = BufReader::with_capacity(1024 * 1024, file);
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .map_err(|e| format!("read {}: {}", path.display(), e))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
 fn finish_file(state: &mut ReceiveState, stats: &mut Stats, output_dir: &Path) {
     let rel_path = match state.file_path.clone() {
         Some(p) => p,
         None => return,
     };
+    let safe = log_safe(&rel_path);
 
     if !state.failed {
         if let Err(e) = finalize_current_batch(state) {
-            error!("Final batch failed for {}: {}", rel_path, e);
+            error!("Final batch failed for {:?} (safe: {:?}): {}", rel_path, safe, e);
             state.failed = true;
         }
     }
@@ -463,15 +551,33 @@ fn finish_file(state: &mut ReceiveState, stats: &mut Stats, output_dir: &Path) {
     let final_path = output_dir.join(&rel_path);
     if let Err(e) = fs::rename(&partial, &final_path) {
         error!(
-            "Failed to rename {} -> {}: {}",
-            partial.display(),
-            final_path.display(),
-            e
+            "Failed to rename {:?} (safe: {:?}) -> {:?}: {}",
+            rel_path, safe, final_path.display(), e
         );
         let _ = fs::remove_file(&partial);
         mark_failure(output_dir, &rel_path);
         reset_transfer(state, stats, false);
         return;
+    }
+
+    // Compute the digest of the *finalized* output file so that an operator
+    // (or the air-gapped consumer, e.g. `sha256 -C` in bin/merge_files) has a
+    // strong, collision-resistant integrity check independent of the per-chunk
+    // MD5 verification used on the wire. The wire MD5 is only a defense-
+    // against-bit-rot check; this digest is what protects against silent FEC
+    // reconstruction with attacker-influenced parity shards.
+    match sha256_file(&final_path) {
+        Ok(digest) => info!(
+            "Received file {:?} (safe: {:?}) size {} SHA-256 {}",
+            rel_path,
+            safe,
+            final_path.metadata().map(|m| m.len()).unwrap_or(0),
+            digest
+        ),
+        Err(e) => warn!(
+            "Failed to compute SHA-256 of {:?} (safe: {:?}): {}",
+            rel_path, safe, e
+        ),
     }
 
     let failed_path = output_dir.join(format!("{}.failed", rel_path));
@@ -481,10 +587,50 @@ fn finish_file(state: &mut ReceiveState, stats: &mut Stats, output_dir: &Path) {
     reset_transfer(state, stats, true);
 }
 
+/// A flow whose most recent fragment arrived longer ago than this is treated
+/// as abandoned, so a fresh `count == 0` from a different id may take over.
+/// Without it, a single lost fragment would wedge the forwarder for good:
+/// an in-progress flow otherwise refuses to be pre-empted (see the re-arm
+/// rules in [`forward_udp_packets`]).
+const UDP_FLOW_TIMEOUT: Duration = Duration::from_secs(2);
+
 struct UdpForwardState {
+    /// First 8 bytes of the sender's per-datagram id. `None` means no flow is
+    /// being reassembled.
     current_id: Option<Vec<u8>>,
     full_packet: Vec<u8>,
     previous_count: u64,
+    /// The "size" field parsed off the first chunk of the current flow.
+    /// Pinned for the lifetime of the flow so an attacker cannot rewrite it
+    /// between chunks to truncate or extend the reassembled datagram.
+    expected_size: usize,
+    /// When the most recently accepted fragment arrived. Only meaningful
+    /// while `current_id` is `Some`.
+    last_activity: Instant,
+}
+
+impl UdpForwardState {
+    fn new() -> Self {
+        Self {
+            current_id: None,
+            full_packet: Vec::new(),
+            previous_count: 0,
+            expected_size: 0,
+            last_activity: Instant::now(),
+        }
+    }
+
+    /// Drop every trace of the in-flight flow. Called after a datagram has
+    /// been forwarded and on every path that decides the flow is unusable.
+    /// Once `current_id` is `None`, continuation fragments (`count > 0`) can
+    /// no longer match, so the remainder of a discarded flow is dropped
+    /// without any further bookkeeping.
+    fn reset(&mut self) {
+        self.current_id = None;
+        self.full_packet.clear();
+        self.previous_count = 0;
+        self.expected_size = 0;
+    }
 }
 
 fn forward_udp_packets(args: Args, rx: mpsc::Receiver<Packet>) {
@@ -501,36 +647,125 @@ fn forward_udp_packets(args: Args, rx: mpsc::Receiver<Packet>) {
     };
     info!("Forwarding UDP packets to {}:{}", args.udp_target_ip, port);
     let target = format!("{}:{}", args.udp_target_ip, port);
-    let mut fwd = UdpForwardState {
-        current_id: None,
-        full_packet: Vec::new(),
-        previous_count: 0,
+    let mut fwd = UdpForwardState::new();
+
+    // Emit the fully reassembled datagram and drop the flow. Only ever called
+    // once `full_packet.len() == expected_size`, so a partial reassembly can
+    // never reach the internal host.
+    let forward = |fwd: &mut UdpForwardState, sock: &UdpSocket, target: &str| {
+        if let Err(e) = sock.send_to(&fwd.full_packet, target) {
+            error!("UDP forward send error: {}", e);
+        }
+        fwd.reset();
     };
+
     while let Ok(packet) = rx.recv() {
-        let size: usize = match std::str::from_utf8(&packet.path_hash)
+        // The sender puts the reassembled length in the 32-byte "path hash"
+        // field of every packet of the flow. It is validated and pinned on
+        // `count == 0`; later fragments must merely agree with the pinned
+        // value.
+        let declared_size: usize = match std::str::from_utf8(&packet.path_hash)
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
         {
             Some(s) => s,
-            None => continue,
+            None => {
+                warn!("UDP: unparseable size field, dropping packet");
+                continue;
+            }
         };
         let id = packet.data_hash[..8].to_vec();
         let count = packet.count;
-        if count == 0 && fwd.current_id.is_none() {
-            fwd.full_packet = packet.data.clone();
-            fwd.previous_count = 0;
-            fwd.current_id = Some(id.clone());
-        } else if Some(&id) == fwd.current_id.as_ref() && count == fwd.previous_count + 1 {
-            fwd.full_packet.extend_from_slice(&packet.data);
-            fwd.previous_count = count;
-        }
-        if fwd.full_packet.len() == size {
-            if let Err(e) = udp_sock.send_to(&fwd.full_packet, target.as_str()) {
-                error!("UDP forward send error: {}", e);
+
+        if count == 0 {
+            if declared_size == 0 || declared_size > UDP_MAX_FORWARD_BYTES {
+                warn!(
+                    "UDP: declared size {} outside [1, {}], ignoring flow",
+                    declared_size, UDP_MAX_FORWARD_BYTES
+                );
+                continue;
             }
-            fwd.previous_count = 0;
-            fwd.full_packet.clear();
-            fwd.current_id = None;
+            if packet.data.is_empty()
+                || packet.data.len() > CHUNK_SIZE
+                || packet.data.len() > declared_size
+            {
+                warn!(
+                    "UDP: first fragment of {} bytes invalid for declared size {}",
+                    packet.data.len(),
+                    declared_size
+                );
+                continue;
+            }
+            // Re-arm rules. A `count == 0` may only take over from a flow
+            // that is still in progress if it is a retransmission of that
+            // same flow (identical id — the sender repeats each datagram
+            // UDP_RESEND times) or if the in-flight flow has gone stale.
+            // Otherwise an on-link host could destroy any multi-fragment
+            // reassembly at will simply by emitting `count == 0` packets.
+            if let Some(current) = fwd.current_id.as_deref() {
+                let same_flow = current == id.as_slice();
+                let stale = fwd.last_activity.elapsed() > UDP_FLOW_TIMEOUT;
+                if !same_flow && !stale {
+                    warn!(
+                        "UDP: count==0 from a different id while {} of {} bytes \
+                         are still in flight; ignoring the new flow",
+                        fwd.full_packet.len(),
+                        fwd.expected_size
+                    );
+                    continue;
+                }
+                if !same_flow {
+                    warn!(
+                        "UDP: abandoning stale flow ({} of {} bytes) in favour \
+                         of a new one",
+                        fwd.full_packet.len(),
+                        fwd.expected_size
+                    );
+                }
+            }
+            fwd.reset();
+            fwd.current_id = Some(id);
+            fwd.expected_size = declared_size;
+            fwd.full_packet.extend_from_slice(&packet.data);
+            fwd.last_activity = Instant::now();
+            // A datagram that fits in a single fragment completes here.
+            if fwd.full_packet.len() == fwd.expected_size {
+                forward(&mut fwd, &udp_sock, &target);
+            }
+            continue;
+        }
+
+        // Continuation fragment: must belong to the in-flight flow and be the
+        // immediate successor of the last accepted fragment. Anything else
+        // (duplicate, gap, foreign id, no flow at all) is dropped without
+        // touching the flow, so stray traffic cannot perturb reassembly.
+        if fwd.current_id.as_deref() != Some(id.as_slice()) || count != fwd.previous_count + 1 {
+            continue;
+        }
+        if declared_size != fwd.expected_size {
+            warn!(
+                "UDP: fragment {} declares size {} but flow is pinned to {}; dropping it",
+                count, declared_size, fwd.expected_size
+            );
+            continue;
+        }
+        let remaining = fwd.expected_size - fwd.full_packet.len();
+        if packet.data.is_empty() || packet.data.len() > CHUNK_SIZE || packet.data.len() > remaining
+        {
+            warn!(
+                "UDP: fragment {} of {} bytes invalid for {} remaining; dropping flow",
+                count,
+                packet.data.len(),
+                remaining
+            );
+            fwd.reset();
+            continue;
+        }
+        fwd.full_packet.extend_from_slice(&packet.data);
+        fwd.previous_count = count;
+        fwd.last_activity = Instant::now();
+        if fwd.full_packet.len() == fwd.expected_size {
+            forward(&mut fwd, &udp_sock, &target);
         }
     }
 }
@@ -695,8 +930,44 @@ fn main() {
             };
             let pkt_type = packet.pkg_type;
             let count = packet.count;
-            let mut state_guard = state_worker.lock().unwrap();
-            let mut stats_guard = stats_worker.lock().unwrap();
+            // Poisoned-lock recovery (see below in the match).
+            let mut state_guard = match state_worker.lock() {
+                Ok(g) => g,
+                Err(poisoned) => {
+                    error!(
+                        "State lock poisoned (a prior handler panicked); \
+                         resetting in-flight transfer and dropping this packet"
+                    );
+                    // Take the inner value (always sound), sanitize it, drop
+                    // the poisoned guard (which resets the poison bit as a
+                    // side-effect of being dropped by the std runtime), then
+                    // re-acquire the lock in a fresh state object.
+                    let mut inner = poisoned.into_inner();
+                    if let Some(p) = inner.file_path.take() {
+                        let _ = fs::remove_file(partial_path(&output_dir_worker, &p));
+                    }
+                    *inner = ReceiveState::new();
+                    drop(inner);
+                    // After dropping the poisoned guard, the lock is clean.
+                    state_worker.lock().map(|g| g).unwrap_or_else(|p| {
+                        // Should be unreachable: we just dropped the only
+                        // holder. Defensive fall-through.
+                        error!("Re-locked a still-poisoned lock (should be unreachable)");
+                        p.into_inner()
+                    })
+                }
+            };
+            let mut stats_guard = match stats_worker.lock() {
+                Ok(g) => g,
+                Err(poisoned) => {
+                    error!("Stats lock poisoned; recovering");
+                    drop(poisoned.into_inner());
+                    stats_worker.lock().map(|g| g).unwrap_or_else(|p| {
+                        error!("Re-locked a still-poisoned stats lock (should be unreachable)");
+                        p.into_inner()
+                    })
+                }
+            };
             match pkt_type {
                 PKG_TYPE_START => {
                     let path = String::from_utf8_lossy(&packet.data).into_owned();
@@ -713,7 +984,7 @@ fn main() {
                     );
                 }
                 PKG_TYPE_DATA if state_guard.file_path.is_some() => {
-                    if !state_guard.failed && is_chunk_valid(&packet, &state_guard) {
+                    if !state_guard.failed && is_chunk_valid(&packet, &state_guard, PKG_TYPE_DATA) {
                         let batch = batch_for_data(packet.count);
                         if batch > state_guard.current_batch {
                             advance_to_batch(&mut state_guard, batch);
@@ -724,7 +995,7 @@ fn main() {
                     }
                 }
                 PKG_TYPE_PARITY if state_guard.file_path.is_some() => {
-                    if !state_guard.failed && is_chunk_valid(&packet, &state_guard) {
+                    if !state_guard.failed && is_chunk_valid(&packet, &state_guard, PKG_TYPE_PARITY) {
                         let batch = batch_for_parity(packet.count);
                         if batch > state_guard.current_batch {
                             advance_to_batch(&mut state_guard, batch);

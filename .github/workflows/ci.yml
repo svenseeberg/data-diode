@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  build-and-test:
+    name: Build and run test_diode.sh (${{ matrix.rust }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Stable: the supported / release channel.
+          - rust: stable
+            features: ""
+          # arduino-gated receiver features: exercised only through the
+          # `cargo build` path, not the loopback test (no hardware in CI).
+          - rust: stable
+            features: --features arduino --package diode-receive
+          # Nightly: guards against MSRV / edition-2024 breakage.
+          - rust: nightly
+            features: ""
+
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (${{ matrix.rust }})
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Show toolchain info
+        run: |
+          rustc --version --verbose
+          cargo --version
+
+      - name: Build (release)
+        run: cargo build --release
+
+      - name: Build with arduino feature
+        if: matrix.features != ''
+        run: cargo build --release ${{ matrix.features }}
+
+      - name: Verify test script syntax
+        run: bash -n test_diode.sh
+
+      # The 10MB+100MB transfer through the shared pacer takes ~40-80s and
+      # the UDP scenarios need extra slack, so the whole thing fits in ~3 min
+      # on CI. Give it 15 so the 300s in-script timeout can fire if needed.
+      - name: Run end-to-end loopback test
+        if: matrix.features == ''
+        run: |
+          set -o pipefail
+          timeout 900 ./test_diode.sh 2>&1 | tail -200
+          ec=${PIPESTATUS[0]}
+          echo "test_diode.sh exited with status $ec" >&2
+          exit $ec
