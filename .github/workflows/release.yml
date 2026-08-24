@@ -14,12 +14,14 @@ permissions:
   contents: write
 
 jobs:
-  build-openbsd-arm64:
+  build:
     name: Build OpenBSD arm64 package
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       CARGO_TERM_COLOR: always
+    outputs:
+      tag: ${{ steps.determine-tag.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,6 +29,7 @@ jobs:
           fetch-depth: 0
 
       - name: Determine release tag
+        id: determine-tag
         env:
           OVERRIDE_TAG: ${{ inputs.tag }}
         run: |
@@ -69,7 +72,11 @@ jobs:
             fi
             echo "Using auto-derived tag: $TAG"
           fi
-          echo "TAG=${TAG}" >> "$GITHUB_ENV"
+          # Expose to the publish job via the job output + as a file
+          # in the artifact (so the publish job can cross-check it).
+          mkdir -p dist
+          printf '%s\n' "${TAG}" > dist/RELEASE_TAG
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
           echo "RELEASE_TAG=${TAG}"
 
       - name: Start OpenBSD arm64 VM
@@ -97,7 +104,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf dist
+          # NOTE: do NOT `rm -rf dist` here - dist/RELEASE_TAG was
+          # written by the previous step (on the GitHub host, before
+          # the VM started) and needs to survive to the artifact.
+          rm -rf dist/package-stage
           cargo build --release --package diode-receive --features arduino
           cargo build --release --package diode-send
           ls -lh target/release/diode_send target/release/diode_receive
@@ -114,7 +124,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${{ env.TAG }}"
+          TAG="$(cat dist/RELEASE_TAG)"
           VERSION="${TAG#v}"
           # 4.0.2      -> version=4.0.2, rev=""
           # 4.0.2rc3   -> version=4.0.2, rev=rc3
@@ -190,7 +200,6 @@ jobs:
               "${PKG_NAME}+COMMENT" \
               usr \
             | gzip -9 > "../${PKG_NAME}.tgz" )
-          mkdir -p dist
           mv -f "dist/${PKG_NAME}.tgz" "dist/diode-$VERSION.tgz"
 
           ls -lh dist/
@@ -198,13 +207,88 @@ jobs:
           tar -tzf "dist/diode-$VERSION.tgz"
           ( cd dist && ../target/release/diode_sha256 diode-$VERSION.tgz | tee diode-$VERSION.tgz.sha256 )
 
-      - name: Create GitHub release and upload assets
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Sync VM files back to the runner
+        run: cpa.sh --sync-files vm-to-runner
+
+      - name: Finalize artifact directory
         run: |
           set -euo pipefail
-          TAG="${{ env.TAG }}"
+          TAG="$(tr -d '[:space:]' < dist/RELEASE_TAG)"
+          VERSION="${TAG#v}"
+          # Drop the scratch staging dir before it lands in the artifact.
+          rm -rf dist/package-stage
+          # Aggregate sha256 manifest for the whole asset set (host-side,
+          # so we don't depend on the VM's diode_sha256 binary).
+          ( cd dist && \
+            ls -lh && \
+            sha256sum diode_send diode_receive "diode-$VERSION.tgz" "diode-$VERSION.tgz.sha256" RELEASE_TAG \
+              | tee SHA256SUMS )
+          # Hard-fail if a required release file is missing.
+          for f in \
+            dist/diode_send \
+            dist/diode_receive \
+            "dist/diode-$VERSION.tgz" \
+            "dist/diode-$VERSION.tgz.sha256" \
+            dist/RELEASE_TAG; do
+            if [ ! -s "$f" ]; then
+              echo "FATAL: required file missing or empty: $f" >&2
+              exit 1
+            fi
+          done
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/
+          retention-days: 7
+
+  publish:
+    name: Create GitHub release
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TAG: ${{ needs.build.outputs.tag }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist/
+
+      - name: Verify tag state
+        run: |
+          set -euo pipefail
+          if [ -z "${TAG}" ]; then
+            echo "FATAL: TAG is empty (job output from build did not propagate)." >&2
+            exit 1
+          fi
+          echo "Publishing release for tag: ${TAG}"
+          # Cross-check the file in the artifact against the job output.
+          if [ ! -s dist/RELEASE_TAG ]; then
+            echo "FATAL: dist/RELEASE_TAG is missing in the release artifact." >&2
+            exit 1
+          fi
+          FILE_TAG="$(tr -d '[:space:]' < dist/RELEASE_TAG)"
+          if [ "${FILE_TAG}" != "${TAG}" ]; then
+            echo "FATAL: artifact tag '${FILE_TAG}' != job output '${TAG}'." >&2
+            exit 1
+          fi
+          # Confirm the tag exists on the remote. Read-only query only -
+          # this workflow does not (by policy) create or push tags.
+          REMOTE="https://github.com/${{ github.repository }}.git"
+          if ! git ls-remote --exit-code --tags "${REMOTE}" "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "FAILED: tag ${TAG} is not present on the remote." >&2
+            echo "       This workflow does not create or push tags." >&2
+            echo "       Push the tag to github.com and re-trigger." >&2
+            exit 1
+          fi
+
+      - name: Create or update the GitHub release
+        run: |
+          set -euo pipefail
           VERSION="${TAG#v}"
           PRERELEASE=""
           [[ "${VERSION}" == *rc* ]] && PRERELEASE="--prerelease"
@@ -254,13 +338,8 @@ jobs:
             echo ""
           } > dist/release-notes.md
 
-          # Aggregate sha256 manifest for the whole asset set.
-          ( cd dist && ls -lh; ../target/release/diode_sha256 * 2>/dev/null | tee SHA256SUMS )
-
           if gh release view "$TAG" --repo "${{ github.repository }}" &>/dev/null; then
-            # The tag was already cut earlier (a re-push of the same tag,
-            # or a re-run of workflow_dispatch for the same tag). Refresh
-            # the assets in place.
+            echo "Updating existing release ${TAG} (re-run)."
             gh release upload "$TAG" \
               --repo "${{ github.repository }}" \
               --clobber \
@@ -270,13 +349,6 @@ jobs:
               dist/diode-$VERSION.tgz.sha256 \
               dist/SHA256SUMS
           else
-            # Tag-push: the tag already points at this commit in the
-            # remote. workflow_dispatch: the tag may not exist yet, in
-            # which case create it at HEAD and push it.
-            if ! git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
-              git tag -f "${TAG}"
-              git push -f origin "${TAG}"
-            fi
             # shellcheck disable=SC2086
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
@@ -289,4 +361,4 @@ jobs:
               dist/diode-$VERSION.tgz.sha256 \
               dist/SHA256SUMS
           fi
-          gh release view "$TAG" --repo "${{ github.repository }}" || true
+          gh release view "$TAG" --repo "${{ github.repository }}"
